@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Allow cleartext to local backend (10.0.2.2) during debug builds. -->
+    <application
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic" />
+    <uses-permission android:name="android.permission.INTERNET"/>
+</manifest>
