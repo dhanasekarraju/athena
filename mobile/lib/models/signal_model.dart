@@ -100,7 +100,7 @@ class OptionContract {
     final strikeLabel = strike >= 1000
         ? strike.toStringAsFixed(0)
         : strike.toStringAsFixed(strike == strike.roundToDouble() ? 0 : 2);
-    return '${strikeLabel}$side · ${daysToExpiry.toStringAsFixed(0)}D · \$${premiumUsd.toStringAsFixed(0)}';
+    return '$strikeLabel$side · ${daysToExpiry.toStringAsFixed(0)}D · \$${premiumUsd.toStringAsFixed(0)}';
   }
 }
 
