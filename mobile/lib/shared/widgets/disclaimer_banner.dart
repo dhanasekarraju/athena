@@ -16,14 +16,14 @@ class DisclaimerBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.hold.withOpacity(0.3)),
       ),
-      child: Row(
+      child: const Row(
         children: [
-          const Icon(Icons.info_outline, size: 16, color: AppColors.hold),
-          const SizedBox(width: 8),
+          Icon(Icons.info_outline, size: 16, color: AppColors.hold),
+          SizedBox(width: 8),
           Expanded(
             child: Text(
               AppConstants.manualExecutionDisclaimer,
-              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
             ),
           ),
         ],
