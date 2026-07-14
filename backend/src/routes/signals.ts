@@ -1,6 +1,30 @@
 import type { FastifyInstance } from "fastify";
 import { aiEngineClient } from "../services/aiEngineClient.js";
 
+interface AiOption {
+  venue: string;
+  instrument_name: string;
+  option_type: string;
+  strike: number;
+  expiry: string;
+  days_to_expiry: number;
+  premium_coin: number;
+  premium_usd: number;
+  mark_iv: number | null;
+  bid_usd: number | null;
+  ask_usd: number | null;
+  open_interest: number;
+  index_price?: number;
+}
+
+interface AiPremiumPlan {
+  entry_low: number;
+  entry_high: number;
+  target_1: number;
+  target_2: number;
+  stop_loss: number;
+}
+
 interface AiSignal {
   symbol: string;
   timeframe: string;
@@ -11,6 +35,14 @@ interface AiSignal {
   target_1: number;
   target_2: number;
   stop_loss: number;
+  underlying_plan?: {
+    entry_range: { low: number; high: number };
+    target_1: number;
+    target_2: number;
+    stop_loss: number;
+  };
+  option?: AiOption | null;
+  premium_plan?: AiPremiumPlan | null;
   reasons: string[];
   factor_breakdown: Record<string, unknown>;
   price: number;
@@ -26,8 +58,9 @@ export default async function signalRoutes(app: FastifyInstance) {
 
     try {
       const signal = (await aiEngineClient.getSignal(symbol, timeframe)) as AiSignal;
+      const option = signal.option ?? null;
+      const premium = signal.premium_plan ?? null;
 
-      // Persist for history/audit trail
       await app.prisma.signal.create({
         data: {
           symbol: signal.symbol,
@@ -41,8 +74,30 @@ export default async function signalRoutes(app: FastifyInstance) {
           target2: signal.target_2,
           stopLoss: signal.stop_loss,
           reasons: signal.reasons,
-          factorBreakdown: signal.factor_breakdown as any,
+          factorBreakdown: signal.factor_breakdown as object,
           price: signal.price,
+          instrumentName: option?.instrument_name ?? null,
+          optionType: option?.option_type ?? null,
+          strike: option?.strike ?? null,
+          expiry: option?.expiry ? new Date(option.expiry) : null,
+          daysToExpiry: option?.days_to_expiry ?? null,
+          premiumUsd: option?.premium_usd ?? null,
+          premiumCoin: option?.premium_coin ?? null,
+          markIv: option?.mark_iv ?? null,
+          premiumEntryLow: premium?.entry_low ?? null,
+          premiumEntryHigh: premium?.entry_high ?? null,
+          premiumTarget1: premium?.target_1 ?? null,
+          premiumTarget2: premium?.target_2 ?? null,
+          premiumStopLoss: premium?.stop_loss ?? null,
+          optionMeta: option
+            ? {
+                venue: option.venue,
+                bid_usd: option.bid_usd,
+                ask_usd: option.ask_usd,
+                open_interest: option.open_interest,
+                index_price: option.index_price ?? null,
+              }
+            : undefined,
         },
       });
 

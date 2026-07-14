@@ -27,6 +27,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from indicators.technical import TechnicalIndicators
 from strategies.signal_engine import SignalEngine
 from sentiment.sentiment import SentimentEngine
+from market.deribit_options import attach_option_plan
 
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
@@ -72,19 +73,45 @@ async def build_signal(symbol: str, timeframe: str, news_score: float = 0.0):
     if latest.get("macd_hist") is not None:
         _prev_macd_hist_cache[cache_key] = latest["macd_hist"]
 
+    spot = float(latest.get("close") or 0)
+    atr = latest.get("atr")
+    atr_f = float(atr) if atr is not None else None
+
+    underlying_plan = {
+        "entry_range": {"low": signal.entry_low, "high": signal.entry_high},
+        "target_1": signal.target_1,
+        "target_2": signal.target_2,
+        "stop_loss": signal.stop_loss,
+    }
+
+    option, premium_plan, option_reason = await attach_option_plan(
+        symbol=symbol,
+        direction=signal.direction,
+        spot=spot,
+        atr=atr_f,
+    )
+
+    reasons = list(signal.reasons)
+    if option_reason:
+        reasons.append(option_reason)
+
     return {
         "symbol": symbol,
         "timeframe": timeframe,
         "direction": signal.direction,
         "confidence": signal.confidence,
         "risk_level": signal.risk_level,
-        "entry_range": {"low": signal.entry_low, "high": signal.entry_high},
-        "target_1": signal.target_1,
-        "target_2": signal.target_2,
-        "stop_loss": signal.stop_loss,
-        "reasons": signal.reasons,
+        # Legacy aliases = underlying plan (spot levels)
+        "entry_range": underlying_plan["entry_range"],
+        "target_1": underlying_plan["target_1"],
+        "target_2": underlying_plan["target_2"],
+        "stop_loss": underlying_plan["stop_loss"],
+        "underlying_plan": underlying_plan,
+        "option": option,
+        "premium_plan": premium_plan,
+        "reasons": reasons,
         "factor_breakdown": signal.factor_breakdown,
-        "price": latest.get("close"),
+        "price": spot,
         "insufficient_data": ti.insufficient_data,
     }
 

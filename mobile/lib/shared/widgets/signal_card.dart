@@ -66,6 +66,13 @@ class SignalCard extends StatelessWidget {
                 _stat('Price', '\$${signal.price.toStringAsFixed(2)}', AppColors.textPrimary),
               ],
             ),
+            if (signal.option != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                signal.option!.shortLabel,
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
           ],
         ),
       ),

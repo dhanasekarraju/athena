@@ -29,7 +29,7 @@ model RefreshToken {
 }
 
 model Signal {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   symbol          String
   timeframe       String
   direction       String // BUY_CALL | BUY_PUT | HOLD
@@ -43,7 +43,22 @@ model Signal {
   reasons         Json
   factorBreakdown Json
   price           Float
-  createdAt       DateTime @default(now())
+  // Deribit options contract + premium plan (nullable for HOLD / unavailable)
+  instrumentName  String?
+  optionType      String? // call | put
+  strike          Float?
+  expiry          DateTime?
+  daysToExpiry    Float?
+  premiumUsd      Float?
+  premiumCoin     Float?
+  markIv          Float?
+  premiumEntryLow Float?
+  premiumEntryHigh Float?
+  premiumTarget1  Float?
+  premiumTarget2  Float?
+  premiumStopLoss Float?
+  optionMeta      Json?
+  createdAt       DateTime  @default(now())
 
   @@index([symbol, timeframe, createdAt])
 }
