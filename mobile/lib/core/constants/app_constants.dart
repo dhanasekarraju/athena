@@ -2,11 +2,11 @@ class AppConstants {
   // Overridden at build time via --dart-define=API_BASE_URL=...
   static const apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:4000',
+    defaultValue: 'http://103.194.228.130:4000',
   );
   static const wsBaseUrl = String.fromEnvironment(
     'WS_BASE_URL',
-    defaultValue: 'ws://10.0.2.2:4000',
+    defaultValue: 'ws://103.194.228.130:4000',
   );
 
   static const supportedSymbols = ['BTC', 'ETH', 'SOL'];
