@@ -3,62 +3,70 @@ name: Mobile - Build & Test
 on:
   push:
     branches: [main]
-    paths: ["mobile/**"]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-ci.yml"
   pull_request:
-    paths: ["mobile/**"]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-ci.yml"
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: mobile
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.24.0"
-          channel: "stable"
-      - run: flutter pub get
-      - run: flutter analyze
-      - run: flutter test
+          channel: stable
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Run Tests
+        run: flutter test
 
   build_apk:
     needs: test
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: mobile
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.24.0"
-          channel: "stable"
-      - run: flutter pub get
+          channel: stable
 
-      # Optional: decode a release keystore from secrets if configured.
-      # Falls back to debug signing if secrets are absent, so the workflow
-      # always produces an installable APK.
-      - name: Decode keystore (if configured)
-        if: ${{ secrets.ATHENA_KEYSTORE_BASE64 != '' }}
-        run: |
-          echo "${{ secrets.ATHENA_KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
-          echo "ATHENA_KEYSTORE_PATH=android/app/release.keystore" >> $GITHUB_ENV
-          echo "ATHENA_KEYSTORE_PASSWORD=${{ secrets.ATHENA_KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
-          echo "ATHENA_KEY_ALIAS=${{ secrets.ATHENA_KEY_ALIAS }}" >> $GITHUB_ENV
-          echo "ATHENA_KEY_PASSWORD=${{ secrets.ATHENA_KEY_PASSWORD }}" >> $GITHUB_ENV
+      - name: Get Dependencies
+        run: flutter pub get
 
-      - name: Build release APK
-        run: |
-          flutter build apk --release \
-            --dart-define=API_BASE_URL=${{ vars.API_BASE_URL || 'https://api.athena.app' }} \
-            --dart-define=WS_BASE_URL=${{ vars.WS_BASE_URL || 'wss://api.athena.app' }}
+      # Build a debug APK for now (no signing required)
+      - name: Build Debug APK
+        run: flutter build apk --debug
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: athena-release-apk
-          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          name: athena-debug-apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 30
