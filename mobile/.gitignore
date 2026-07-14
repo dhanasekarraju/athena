@@ -1,0 +1,13 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+android/local.properties
+android/key.properties
+android/app/release.keystore
+ios/Flutter/Generated.xcconfig
+*.g.dart
+*.freezed.dart
+google-services.json
+GoogleService-Info.plist

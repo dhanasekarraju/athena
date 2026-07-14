@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: athena-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-athena}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-athena_password}
+      POSTGRES_DB: ${POSTGRES_DB:-athena}
+    ports:
+      - "5432:5432"
+    volumes:
+      - athena_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-athena}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: athena-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ai-engine:
+    build:
+      context: ./ai-engine
+    container_name: athena-ai-engine
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    container_name: athena-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-athena}:${POSTGRES_PASSWORD:-athena_password}@postgres:5432/${POSTGRES_DB:-athena}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      REDIS_URL: redis://redis:6379
+      AI_ENGINE_URL: http://ai-engine:8000
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-engine:
+        condition: service_started
+
+  flutter-builder:
+    build:
+      context: ./mobile
+      dockerfile: Dockerfile
+    container_name: athena-flutter-builder
+    profiles: ["build"] # only runs when explicitly invoked: docker compose --profile build run flutter-builder
+    volumes:
+      - ./mobile:/app
+      - athena_flutter_pub_cache:/root/.pub-cache
+
+volumes:
+  athena_postgres_data:
+  athena_flutter_pub_cache:

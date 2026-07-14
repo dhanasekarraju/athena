@@ -1,0 +1,25 @@
+# Env
+.env
+*.env.local
+
+# Node
+backend/node_modules/
+backend/dist/
+
+# Python
+ai-engine/__pycache__/
+ai-engine/.venv/
+**/__pycache__/
+*.pyc
+
+# Flutter
+mobile/.dart_tool/
+mobile/build/
+mobile/android/local.properties
+mobile/android/key.properties
+
+# Docker
+*.log
+
+# OS
+.DS_Store

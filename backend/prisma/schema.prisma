@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+  trades        Trade[]
+  watchlist     WatchlistItem[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Signal {
+  id              String   @id @default(uuid())
+  symbol          String
+  timeframe       String
+  direction       String // BUY_CALL | BUY_PUT | HOLD
+  confidence      Float
+  riskLevel       String
+  entryLow        Float
+  entryHigh       Float
+  target1         Float
+  target2         Float
+  stopLoss        Float
+  reasons         Json
+  factorBreakdown Json
+  price           Float
+  createdAt       DateTime @default(now())
+
+  @@index([symbol, timeframe, createdAt])
+}
+
+model Trade {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol       String
+  direction    String // BUY_CALL | BUY_PUT
+  entryPrice   Float
+  exitPrice    Float?
+  quantity     Float
+  stopLoss     Float?
+  target1      Float?
+  target2      Float?
+  status       String    @default("OPEN") // OPEN | CLOSED
+  pnl          Float?
+  notes        String?
+  openedAt     DateTime  @default(now())
+  closedAt     DateTime?
+
+  @@index([userId, status])
+}
+
+model WatchlistItem {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol    String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, symbol])
+}
+
+model NewsItem {
+  id            String   @id @default(uuid())
+  title         String
+  source        String
+  url           String
+  sentiment     String // Bullish | Bearish | Neutral
+  sentimentScore Float
+  publishedAt   DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([publishedAt])
+}
