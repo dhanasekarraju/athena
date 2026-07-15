@@ -9,8 +9,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-athena}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-athena_password}
       POSTGRES_DB: ${POSTGRES_DB:-athena}
-    ports:
-      - "5432:5432"
+    # Internal only — avoid clashing with other stacks on the host (e.g. Apex on 5432)
     volumes:
       - athena_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,8 +22,7 @@ services:
     image: redis:7-alpine
     container_name: athena-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # Internal only — avoid clashing with other stacks on the host (e.g. Apex on 6379)
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
