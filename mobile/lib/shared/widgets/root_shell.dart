@@ -10,7 +10,7 @@ class RootShell extends StatelessWidget {
   static const _tabs = [
     ('/dashboard', Icons.dashboard_outlined, Icons.dashboard, 'Home'),
     ('/charts', Icons.show_chart, Icons.show_chart, 'Charts'),
-    ('/watchlist', Icons.star_outline, Icons.star, 'Watchlist'),
+    ('/live-log', Icons.history_outlined, Icons.history, 'Live Log'),
     ('/news', Icons.newspaper_outlined, Icons.newspaper, 'News'),
     ('/portfolio', Icons.pie_chart_outline, Icons.pie_chart, 'Portfolio'),
     ('/settings', Icons.settings_outlined, Icons.settings, 'Settings'),

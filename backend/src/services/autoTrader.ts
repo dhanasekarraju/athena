@@ -16,6 +16,19 @@ export interface AutonSignal {
   insufficient_data?: boolean;
 }
 
+export type BotActivityLevel = "info" | "skip" | "trade" | "exit" | "error";
+
+export interface BotActivityEvent {
+  id: string;
+  at: string;
+  level: BotActivityLevel;
+  message: string;
+  symbol?: string;
+  details?: Record<string, unknown>;
+}
+
+const ACTIVITY_LIMIT = 150;
+
 /**
  * Cautious Delta options auto-trader.
  * Runtime limits come from BotConfig (editable in the mobile Settings UI).
@@ -25,12 +38,34 @@ export class AutoTrader {
   private killed = false;
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
+  private readonly activity: BotActivityEvent[] = [];
 
   constructor(
     private readonly prisma: PrismaClient,
     private readonly log: FastifyBaseLogger,
   ) {
     this.client = DeltaClient.fromEnv(env);
+  }
+
+  getActivity(limit = 80): BotActivityEvent[] {
+    const n = Math.min(Math.max(limit, 1), ACTIVITY_LIMIT);
+    return this.activity.slice(0, n);
+  }
+
+  private pushActivity(
+    level: BotActivityLevel,
+    message: string,
+    opts: { symbol?: string; details?: Record<string, unknown> } = {},
+  ): void {
+    this.activity.unshift({
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      level,
+      message,
+      symbol: opts.symbol,
+      details: opts.details,
+    });
+    if (this.activity.length > ACTIVITY_LIMIT) this.activity.length = ACTIVITY_LIMIT;
   }
 
   async status() {
@@ -53,11 +88,13 @@ export class AutoTrader {
 
   kill(reason = "manual_kill") {
     this.killed = true;
+    this.pushActivity("info", `Kill switch ON (${reason})`);
     this.log.warn({ reason }, "AutoTrader killed — no new entries, exits still monitored");
   }
 
   resume() {
     this.killed = false;
+    this.pushActivity("info", "Kill switch OFF — auto buys can resume");
     this.log.info("AutoTrader resumed");
   }
 
@@ -76,15 +113,48 @@ export class AutoTrader {
 
   async onSignal(signal: AutonSignal): Promise<void> {
     const cfg = await getBotConfig(this.prisma);
-    if (!cfg.autonomousEnabled || this.killed) return;
-    if (signal.direction !== "BUY_CALL" && signal.direction !== "BUY_PUT") return;
+    const sym = signal.symbol.toUpperCase();
 
-    if (!cfg.symbols.includes(signal.symbol.toUpperCase())) return;
+    if (signal.direction !== "BUY_CALL" && signal.direction !== "BUY_PUT") {
+      return;
+    }
+
+    if (!cfg.autonomousEnabled) {
+      this.pushActivity("skip", `${sym} ${signal.direction} skipped — Auto is OFF`, {
+        symbol: sym,
+        details: { confidence: signal.confidence },
+      });
+      return;
+    }
+    if (this.killed) {
+      this.pushActivity("skip", `${sym} ${signal.direction} skipped — kill switch ON`, {
+        symbol: sym,
+        details: { confidence: signal.confidence },
+      });
+      return;
+    }
+
+    if (!cfg.symbols.includes(sym)) {
+      this.pushActivity("skip", `${sym} skipped — not in bot symbols`, {
+        symbol: sym,
+        details: { symbols: cfg.symbols },
+      });
+      return;
+    }
     if (signal.insufficient_data) {
+      this.pushActivity("skip", `${sym} skipped — insufficient data`, { symbol: sym });
       this.log.info({ symbol: signal.symbol }, "Skip auto entry: insufficient data");
       return;
     }
     if (signal.confidence < cfg.minConfidence) {
+      this.pushActivity(
+        "skip",
+        `${sym} ${signal.direction} skipped — confidence ${signal.confidence} < ${cfg.minConfidence}`,
+        {
+          symbol: sym,
+          details: { confidence: signal.confidence, minConfidence: cfg.minConfidence },
+        },
+      );
       this.log.info(
         { symbol: signal.symbol, confidence: signal.confidence },
         "Skip auto entry: confidence below threshold",
@@ -92,15 +162,26 @@ export class AutoTrader {
       return;
     }
     if (cfg.skipHighRisk && signal.risk_level === "High") {
+      this.pushActivity("skip", `${sym} skipped — High risk filter`, {
+        symbol: sym,
+        details: { risk_level: signal.risk_level },
+      });
       this.log.info({ symbol: signal.symbol }, "Skip auto entry: High risk");
       return;
     }
 
-    if (this.busy) return;
+    if (this.busy) {
+      this.pushActivity("skip", `${sym} skipped — bot busy`, { symbol: sym });
+      return;
+    }
     this.busy = true;
     try {
       await this.tryEnter(signal, cfg);
     } catch (err) {
+      this.pushActivity("error", `${sym} entry failed`, {
+        symbol: sym,
+        details: { error: String(err) },
+      });
       this.log.error({ err, signal }, "AutoTrader entry failed");
     } finally {
       this.busy = false;
@@ -108,14 +189,20 @@ export class AutoTrader {
   }
 
   private async tryEnter(signal: AutonSignal, cfg: RuntimeBotConfig): Promise<void> {
+    const sym = signal.symbol.toUpperCase();
     const open = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
     const openExposure = open.reduce((s, p) => s + p.entryPremium * p.size, 0);
     const room = cfg.maxOpenExposureInr - openExposure;
     if (room < 50) {
+      this.pushActivity("skip", `${sym} skipped — exposure limit`, {
+        symbol: sym,
+        details: { openExposure, room },
+      });
       this.log.info({ openExposure, room }, "Skip auto entry: exposure limit reached");
       return;
     }
-    if (open.some((p) => p.underlying === signal.symbol.toUpperCase())) {
+    if (open.some((p) => p.underlying === sym)) {
+      this.pushActivity("skip", `${sym} skipped — already open on underlying`, { symbol: sym });
       this.log.info({ symbol: signal.symbol }, "Skip auto entry: already open on underlying");
       return;
     }
@@ -127,16 +214,28 @@ export class AutoTrader {
       spot: signal.price,
     });
     if (!selected) {
+      this.pushActivity("skip", `${sym} skipped — no Delta contract`, { symbol: sym });
       this.log.info({ symbol: signal.symbol }, "Skip auto entry: no Delta contract");
       return;
     }
 
     const premium = selected.ask > 0 ? selected.ask : selected.markPremium;
-    if (premium <= 0) return;
+    if (premium <= 0) {
+      this.pushActivity("skip", `${sym} skipped — premium ≤ 0`, {
+        symbol: sym,
+        details: { product: selected.productSymbol },
+      });
+      return;
+    }
 
     const budget = Math.min(cfg.maxOrderInr, room);
     const size = Math.floor(budget / premium);
     if (size < 1) {
+      this.pushActivity(
+        "skip",
+        `${sym} skipped — 1× ${selected.productSymbol} costs ₹${premium.toFixed(0)} > max ₹${budget}`,
+        { symbol: sym, details: { premium, budget, product: selected.productSymbol } },
+      );
       this.log.info(
         { premium, budget, symbol: selected.productSymbol },
         "Skip auto entry: 1 contract costs more than max order",
@@ -175,7 +274,7 @@ export class AutoTrader {
         exchange: "delta",
         productId: selected.productId,
         productSymbol: selected.productSymbol,
-        underlying: signal.symbol.toUpperCase(),
+        underlying: sym,
         direction: signal.direction,
         size,
         entryPremium: fillPremium,
@@ -194,6 +293,22 @@ export class AutoTrader {
         } as object,
       },
     });
+
+    this.pushActivity(
+      "trade",
+      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${size} @ ${fillPremium.toFixed(2)}`,
+      {
+        symbol: sym,
+        details: {
+          product: selected.productSymbol,
+          size,
+          premium: fillPremium,
+          notional,
+          paper,
+          confidence: signal.confidence,
+        },
+      },
+    );
   }
 
   async monitorOpenPositions(): Promise<void> {
@@ -260,6 +375,14 @@ export class AutoTrader {
         closedAt: new Date(),
       },
     });
+
+    this.pushActivity(
+      "exit",
+      `${paper ? "PAPER" : "LIVE"} EXIT ${productSymbol} (${reason}) mark=${mark.toFixed(2)} pnl=${pnl.toFixed(2)}`,
+      {
+        details: { productSymbol, reason, mark, pnl, paper },
+      },
+    );
   }
 }
 

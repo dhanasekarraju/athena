@@ -43,6 +43,28 @@ export default async function botRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get("/api/bot/log", { preHandler: [app.authenticate] }, async (request) => {
+    const q = request.query as { limit?: string };
+    const limit = Number(q.limit) || 80;
+    const trader = getAutoTrader(app.prisma, app.log);
+    const status = await trader.status();
+    const open = await app.prisma.botPosition.findMany({
+      where: { status: "OPEN" },
+      orderBy: { openedAt: "desc" },
+    });
+    return {
+      status: {
+        autonomous: status.autonomous,
+        paper: status.paper,
+        killed: status.killed,
+        minConfidence: status.minConfidence,
+        deltaConfigured: status.deltaConfigured,
+      },
+      openPositions: open,
+      events: trader.getActivity(limit),
+    };
+  });
+
   app.patch("/api/bot/config", { preHandler: [app.authenticate] }, async (request, reply) => {
     const parsed = ConfigPatchSchema.safeParse(request.body);
     if (!parsed.success) {

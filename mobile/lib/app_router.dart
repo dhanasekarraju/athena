@@ -7,7 +7,7 @@ import 'features/charts/charts_screen.dart';
 import 'features/news/news_screen.dart';
 import 'features/portfolio/portfolio_screen.dart';
 import 'features/journal/journal_screen.dart';
-import 'features/watchlist/watchlist_screen.dart';
+import 'features/live_log/live_log_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/signals/signal_details_screen.dart';
 import 'shared/widgets/root_shell.dart';
@@ -27,7 +27,7 @@ final appRouter = GoRouter(
       routes: [
         GoRoute(path: '/dashboard', builder: (context, state) => const DashboardScreen()),
         GoRoute(path: '/charts', builder: (context, state) => const ChartsScreen()),
-        GoRoute(path: '/watchlist', builder: (context, state) => const WatchlistScreen()),
+        GoRoute(path: '/live-log', builder: (context, state) => const LiveLogScreen()),
         GoRoute(path: '/news', builder: (context, state) => const NewsScreen()),
         GoRoute(path: '/portfolio', builder: (context, state) => const PortfolioScreen()),
         GoRoute(path: '/journal', builder: (context, state) => const JournalScreen()),
