@@ -84,6 +84,48 @@ model Trade {
   @@index([userId, status])
 }
 
+/// Autonomous bot positions (Delta options). Separate from manual journal trades.
+model BotPosition {
+  id             String    @id @default(uuid())
+  exchange       String    @default("delta")
+  productId      Int
+  productSymbol  String
+  underlying     String
+  direction      String // BUY_CALL | BUY_PUT
+  size           Float
+  entryPremium   Float
+  stopLoss       Float
+  takeProfit1    Float
+  status         String    @default("OPEN") // OPEN | CLOSED
+  paper          Boolean   @default(true)
+  entryOrderId   String?
+  exitOrderId    String?
+  exitPremium    Float?
+  exitReason     String?
+  realizedPnl    Float?
+  signalSnapshot Json?
+  openedAt       DateTime  @default(now())
+  closedAt       DateTime?
+
+  @@index([status, openedAt])
+  @@index([productSymbol, status])
+}
+
+/// Singleton runtime config editable from the mobile Settings UI (id = "default").
+model BotConfig {
+  id                 String   @id @default("default")
+  autonomousEnabled  Boolean  @default(false)
+  paperTrading       Boolean  @default(true)
+  maxOrderInr        Float    @default(1000)
+  maxOpenExposureInr Float    @default(2000)
+  minConfidence      Float    @default(55)
+  symbols            String   @default("BTC,ETH")
+  slFraction         Float    @default(0.4)
+  tp1Fraction        Float    @default(0.5)
+  skipHighRisk       Boolean  @default(true)
+  updatedAt          DateTime @updatedAt
+}
+
 model WatchlistItem {
   id        String   @id @default(uuid())
   userId    String

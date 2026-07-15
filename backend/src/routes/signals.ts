@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { aiEngineClient } from "../services/aiEngineClient.js";
+import { getAutoTrader } from "../services/autoTrader.js";
 
 interface AiOption {
   venue: string;
@@ -100,6 +101,9 @@ export default async function signalRoutes(app: FastifyInstance) {
             : undefined,
         },
       });
+
+      // Fire-and-forget cautious Delta entry (respects AUTONOMOUS_TRADING + risk caps)
+      void getAutoTrader(app.prisma, app.log).onSignal(signal);
 
       return reply.send(signal);
     } catch (err) {

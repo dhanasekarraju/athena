@@ -4,7 +4,9 @@ import '../core/storage/secure_storage_service.dart';
 import '../services/auth_service.dart';
 import '../services/signal_service.dart';
 import '../services/live_signal_service.dart';
+import '../services/bot_service.dart';
 import '../models/signal_model.dart';
+import '../models/bot_config.dart';
 import '../core/constants/app_constants.dart';
 
 final secureStorageProvider = Provider((ref) => SecureStorageService());
@@ -16,6 +18,12 @@ final authServiceProvider = Provider(
 );
 
 final signalServiceProvider = Provider((ref) => SignalService(ref.watch(apiClientProvider)));
+
+final botServiceProvider = Provider((ref) => BotService(ref.watch(apiClientProvider)));
+
+final botConfigProvider = FutureProvider.autoDispose<BotConfig>((ref) async {
+  return ref.watch(botServiceProvider).getConfig();
+});
 
 final liveSignalServiceProvider = Provider((ref) {
   final service = LiveSignalService()..connect();

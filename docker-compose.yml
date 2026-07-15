@@ -58,6 +58,15 @@ services:
       REDIS_URL: redis://redis:6379
       AI_ENGINE_URL: http://ai-engine:8000
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      AUTONOMOUS_TRADING: ${AUTONOMOUS_TRADING:-false}
+      PAPER_TRADING: ${PAPER_TRADING:-true}
+      DELTA_API_KEY: ${DELTA_API_KEY:-}
+      DELTA_API_SECRET: ${DELTA_API_SECRET:-}
+      DELTA_BASE_URL: ${DELTA_BASE_URL:-https://api.india.delta.exchange}
+      MAX_ORDER_INR: ${MAX_ORDER_INR:-1000}
+      MAX_OPEN_EXPOSURE_INR: ${MAX_OPEN_EXPOSURE_INR:-2000}
+      MIN_SIGNAL_CONFIDENCE: ${MIN_SIGNAL_CONFIDENCE:-55}
+      AUTONOMOUS_SYMBOLS: ${AUTONOMOUS_SYMBOLS:-BTC,ETH}
     ports:
       - "4000:4000"
     depends_on:
