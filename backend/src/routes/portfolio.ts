@@ -18,8 +18,7 @@ const CloseTradeSchema = z.object({
 });
 
 export default async function portfolioRoutes(app: FastifyInstance) {
-  // NOTE: ATHENA never places orders on an exchange. This endpoint only
-  // records a trade the user has already executed manually elsewhere.
+  // Manual trade journal (user-logged trades, separate from Delta auto-trader).
   app.post("/api/trades", { preHandler: [app.authenticate] }, async (request, reply) => {
     const parsed = TradeSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
@@ -62,19 +61,58 @@ export default async function portfolioRoutes(app: FastifyInstance) {
 
   app.get("/api/portfolio", { preHandler: [app.authenticate] }, async (request, reply) => {
     const userId = (request.user as { sub: string }).sub;
-    const trades = await app.prisma.trade.findMany({ where: { userId, status: "CLOSED" } });
 
-    const totalTrades = trades.length;
-    const wins = trades.filter((t) => (t.pnl ?? 0) > 0).length;
-    const totalPnl = trades.reduce((acc, t) => acc + (t.pnl ?? 0), 0);
+    // Manual journal stats (legacy)
+    const manualClosed = await app.prisma.trade.findMany({ where: { userId, status: "CLOSED" } });
+    const manualTotal = manualClosed.length;
+    const manualWins = manualClosed.filter((t) => (t.pnl ?? 0) > 0).length;
+    const manualPnl = manualClosed.reduce((acc, t) => acc + (t.pnl ?? 0), 0);
+
+    // Auto-trader (paper + live) positions — primary portfolio for bot users
+    const botOpen = await app.prisma.botPosition.findMany({
+      where: { status: "OPEN" },
+      orderBy: { openedAt: "desc" },
+    });
+    const botClosed = await app.prisma.botPosition.findMany({
+      where: { status: "CLOSED" },
+      orderBy: { closedAt: "desc" },
+      take: 50,
+    });
+    const botWins = botClosed.filter((p) => (p.realizedPnl ?? 0) > 0).length;
+    const botLosses = botClosed.filter((p) => (p.realizedPnl ?? 0) <= 0).length;
+    const botPnl = botClosed.reduce((acc, p) => acc + (p.realizedPnl ?? 0), 0);
+    const botClosedCount = botClosed.length;
+    // Approximate open notional (premium * size); mark-to-market not stored here
+    const openNotional = botOpen.reduce((acc, p) => acc + p.entryPremium * p.size, 0);
+    const openPaper = botOpen.filter((p) => p.paper).length;
+    const openLive = botOpen.length - openPaper;
+
+    const totalTrades = botClosedCount;
+    const wins = botWins;
+    const losses = botLosses;
+    const totalPnl = botPnl;
     const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
 
     return reply.send({
+      // Headline stats driven by bot trades
       totalTrades,
       wins,
-      losses: totalTrades - wins,
+      losses,
       winRate: Math.round(winRate * 10) / 10,
       totalPnl: Math.round(totalPnl * 100) / 100,
+      openCount: botOpen.length,
+      openNotional: Math.round(openNotional * 100) / 100,
+      openPaper,
+      openLive,
+      openPositions: botOpen,
+      recentClosed: botClosed.slice(0, 20),
+      // Keep manual journal totals for secondary display if needed
+      manual: {
+        totalTrades: manualTotal,
+        wins: manualWins,
+        losses: manualTotal - manualWins,
+        totalPnl: Math.round(manualPnl * 100) / 100,
+      },
     });
   });
 }
