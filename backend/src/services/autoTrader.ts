@@ -220,7 +220,10 @@ export class AutoTrader {
   private async tryEnter(signal: AutonSignal, cfg: RuntimeBotConfig): Promise<void> {
     const sym = signal.symbol.toUpperCase();
     const usdInr = env.USD_INR_RATE;
-    const open = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
+    const paperMode = cfg.paperTrading || !this.client.configured;
+    const open = await this.prisma.botPosition.findMany({
+      where: { status: "OPEN", paper: paperMode },
+    });
     const openExposure = open.reduce(
       (s, p) => s + positionCostInr(p.entryPremium, p.size, p.productSymbol, p.signalSnapshot, usdInr),
       0,
