@@ -269,7 +269,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required double value,
     required ValueChanged<double> onChanged,
   }) {
-    return TextFormField<String>(
+    return TextFormField(
       initialValue: value.toStringAsFixed(value == value.roundToDouble() ? 0 : 1),
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       decoration: InputDecoration(labelText: label),
