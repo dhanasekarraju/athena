@@ -35,7 +35,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       });
       ref.invalidate(botConfigProvider);
     } catch (e) {
-      setState(() => _error = 'Save failed. Are you logged in? Is the backend up?');
+      final msg = e.toString();
+      final unauthorized = msg.contains('401') || msg.contains('Unauthorized');
+      setState(() => _error = unauthorized
+          ? 'Session expired — sign out and log in again, then Save.'
+          : 'Save failed: $msg');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
