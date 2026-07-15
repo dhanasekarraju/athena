@@ -32,6 +32,8 @@ const EnvSchema = z.object({
   BOT_POLL_MS: z.coerce.number().default(15000),
   /** Used to size Delta USD-quoted options against INR risk caps */
   USD_INR_RATE: z.coerce.number().default(85),
+  /** Virtual cash for paper trading equity display */
+  PAPER_BALANCE_INR: z.coerce.number().default(10000),
 });
 
 export const env = EnvSchema.parse(process.env);

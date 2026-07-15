@@ -381,7 +381,6 @@ export class AutoTrader {
 
   async monitorOpenPositions(): Promise<void> {
     const cfg = await getBotConfig(this.prisma);
-    // Always monitor open positions even if autonomous currently off (exits still apply)
     const open = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
     for (const pos of open) {
       try {
@@ -391,6 +390,18 @@ export class AutoTrader {
       }
     }
     void cfg;
+  }
+
+  /** Manual close from Portfolio UI (paper or live). */
+  async closePosition(id: string): Promise<{ ok: true; pnl: number; mark: number; paper: boolean }> {
+    const pos = await this.prisma.botPosition.findUnique({ where: { id } });
+    if (!pos || pos.status !== "OPEN") {
+      throw Object.assign(new Error("Position not found or already closed"), { statusCode: 404 });
+    }
+    const ticker = await this.client.getTicker(pos.productSymbol);
+    let mark = this.client.markPrice(ticker);
+    if (mark <= 0) mark = pos.entryPremium;
+    return this.executeExit(pos, mark, "manual_close");
   }
 
   private async checkExit(pos: {
@@ -413,6 +424,22 @@ export class AutoTrader {
     else if (mark >= pos.takeProfit1) reason = "take_profit_1";
     if (!reason) return;
 
+    await this.executeExit(pos, mark, reason);
+  }
+
+  private async executeExit(
+    pos: {
+      id: string;
+      productId: number;
+      productSymbol: string;
+      entryPremium: number;
+      size: number;
+      paper: boolean;
+      signalSnapshot: unknown;
+    },
+    mark: number,
+    reason: string,
+  ): Promise<{ ok: true; pnl: number; mark: number; paper: boolean }> {
     let exitOrderId: string | null = null;
     if (pos.paper || !this.client.configured) {
       exitOrderId = `paper-exit-${pos.id.slice(0, 12)}`;
@@ -460,6 +487,8 @@ export class AutoTrader {
         details: { productSymbol: pos.productSymbol, reason, mark, pnl, paper: pos.paper },
       },
     );
+
+    return { ok: true, pnl, mark, paper: pos.paper };
   }
 }
 

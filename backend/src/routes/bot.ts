@@ -98,4 +98,16 @@ export default async function botRoutes(app: FastifyInstance) {
     getAutoTrader(app.prisma, app.log).resume();
     return reply.send({ ok: true, killed: false });
   });
+
+  app.post("/api/bot/positions/:id/close", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const result = await getAutoTrader(app.prisma, app.log).closePosition(id);
+      return reply.send(result);
+    } catch (err) {
+      const e = err as Error & { statusCode?: number };
+      const code = e.statusCode === 404 ? 404 : 400;
+      return reply.code(code).send({ error: e.message || "Close failed" });
+    }
+  });
 }

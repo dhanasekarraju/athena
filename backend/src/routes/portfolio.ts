@@ -128,10 +128,39 @@ export default async function portfolioRoutes(app: FastifyInstance) {
       });
     }
 
+    const botClosedAll = await app.prisma.botPosition.findMany({
+      where: { status: "CLOSED" },
+      select: { realizedPnl: true },
+    });
+    const realizedAll = botClosedAll.reduce((acc, p) => acc + (p.realizedPnl ?? 0), 0);
+
     const openNotional = enrichedOpen.reduce((acc, p) => acc + p.entryCostInr, 0);
     const openUnrealized = enrichedOpen.reduce((acc, p) => acc + p.unrealizedPnlInr, 0);
     const openPaper = botOpen.filter((p) => p.paper).length;
     const openLive = botOpen.length - openPaper;
+
+    const cfg = await app.prisma.botConfig.findUnique({ where: { id: "default" } });
+    const paperMode = cfg?.paperTrading ?? true;
+
+    let deltaUsdAvailable: number | null = null;
+    let availableBalanceInr: number;
+    let balanceLabel: string;
+
+    if (paperMode) {
+      const start = env.PAPER_BALANCE_INR;
+      availableBalanceInr = Math.round((start + realizedAll - openNotional) * 100) / 100;
+      balanceLabel = "Paper available";
+    } else {
+      deltaUsdAvailable = await client.getUsdAvailable();
+      availableBalanceInr =
+        deltaUsdAvailable == null
+          ? 0
+          : Math.round(deltaUsdAvailable * env.USD_INR_RATE * 100) / 100;
+      balanceLabel = "Delta USD≈INR";
+    }
+
+    const totalPnlCombined = Math.round((realizedAll + openUnrealized) * 100) / 100;
+    const equityInr = Math.round((availableBalanceInr + openNotional + openUnrealized) * 100) / 100;
 
     const totalTrades = botClosedCount;
     const wins = botWins;
@@ -145,11 +174,20 @@ export default async function portfolioRoutes(app: FastifyInstance) {
       losses,
       winRate: Math.round(winRate * 10) / 10,
       totalPnl: Math.round(totalPnl * 100) / 100,
+      /** Closed + open unrealized (headline PnL) */
+      totalPnlInr: totalPnlCombined,
+      realizedPnlInr: Math.round(realizedAll * 100) / 100,
       openCount: botOpen.length,
       openNotional: Math.round(openNotional * 100) / 100,
       openUnrealizedPnl: Math.round(openUnrealized * 100) / 100,
       openPaper,
       openLive,
+      paperMode,
+      balanceLabel,
+      availableBalanceInr,
+      equityInr,
+      paperStartInr: env.PAPER_BALANCE_INR,
+      deltaUsdAvailable,
       currencyNote: "Risk caps & PnL are approx INR (Delta premiums are USD × contract_value × USD_INR_RATE)",
       openPositions: enrichedOpen,
       recentClosed: botClosed.slice(0, 20),

@@ -21,6 +21,11 @@ class BotService {
     return BotLiveLog.fromJson(Map<String, dynamic>.from(res.data as Map));
   }
 
+  Future<Map<String, dynamic>> closePosition(String id) async {
+    final res = await _api.dio.post('/api/bot/positions/$id/close');
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
   Future<void> kill() async {
     await _api.dio.post('/api/bot/kill');
   }

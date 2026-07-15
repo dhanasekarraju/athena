@@ -120,6 +120,39 @@ export class DeltaClient {
     return this.request<DeltaTicker>("GET", `/v2/tickers/${encodeURIComponent(symbol)}`);
   }
 
+  /** Wallet balances (auth). Returns raw Delta wallet rows. */
+  async getWalletBalances(): Promise<
+    Array<{
+      asset_symbol?: string;
+      available_balance?: string | number;
+      balance?: string | number;
+      [k: string]: unknown;
+    }>
+  > {
+    const result = await this.request<
+      | Array<Record<string, unknown>>
+      | { [k: string]: Record<string, unknown> }
+    >("GET", "/v2/wallet/balances", { auth: true });
+    if (Array.isArray(result)) return result as Array<{ asset_symbol?: string; available_balance?: string | number; balance?: string | number }>;
+    return Object.values(result ?? {}) as Array<{
+      asset_symbol?: string;
+      available_balance?: string | number;
+      balance?: string | number;
+    }>;
+  }
+
+  async getUsdAvailable(): Promise<number | null> {
+    if (!this.configured) return null;
+    try {
+      const rows = await this.getWalletBalances();
+      const usd = rows.find((r) => String(r.asset_symbol || "").toUpperCase() === "USD");
+      if (!usd) return 0;
+      return toNum(usd.available_balance ?? usd.balance);
+    } catch {
+      return null;
+    }
+  }
+
   async placeMarketOrder(input: {
     productId: number;
     productSymbol: string;
