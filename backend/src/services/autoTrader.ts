@@ -43,6 +43,10 @@ export interface AutonSignal {
   risk_level: string;
   price: number;
   insufficient_data?: boolean;
+  /** AI option premium plan (USD). TP uses these; SL stays settings-based. */
+  premium_entry?: number | null;
+  premium_target_1?: number | null;
+  premium_target_2?: number | null;
 }
 
 export type BotActivityLevel = "info" | "skip" | "trade" | "exit" | "error";
@@ -299,7 +303,7 @@ export class AutoTrader {
 
     let entryOrderId: string | null = null;
     let fillPremium = premium;
-    const paper = cfg.paperTrading || !this.client.configured;
+    const paper = paperMode;
 
     if (paper) {
       entryOrderId = `paper-${clientOrderId}`;
@@ -328,6 +332,25 @@ export class AutoTrader {
       this.log.info({ orderId: entryOrderId, product: selected.productSymbol, size }, "LIVE buy submitted");
     }
 
+    // SL: settings fraction. TP: AI premium plan (prefer TP2 so winners can run further).
+    const stopLoss = fillPremium * (1 - cfg.slFraction);
+    const aiEntry =
+      signal.premium_entry && signal.premium_entry > 0 ? signal.premium_entry : fillPremium;
+    const scale = fillPremium / aiEntry;
+    const aiTpRaw =
+      (signal.premium_target_2 && signal.premium_target_2 > 0
+        ? signal.premium_target_2
+        : null) ??
+      (signal.premium_target_1 && signal.premium_target_1 > 0
+        ? signal.premium_target_1
+        : null);
+    const aiTp = aiTpRaw != null ? aiTpRaw * scale : null;
+    const fallbackTp = fillPremium * (1 + cfg.tp1Fraction);
+    // Use AI TP when it is meaningfully above entry; otherwise settings fallback
+    const takeProfit1 =
+      aiTp != null && aiTp > fillPremium * 1.05 ? aiTp : fallbackTp;
+    const tpSource = aiTp != null && aiTp > fillPremium * 1.05 ? "ai" : "settings";
+
     const fillCostInr =
       contractCostUsd(fillPremium, selected.contractValue) * size * usdInr;
 
@@ -340,8 +363,8 @@ export class AutoTrader {
         direction: signal.direction,
         size,
         entryPremium: fillPremium,
-        stopLoss: fillPremium * (1 - cfg.slFraction),
-        takeProfit1: fillPremium * (1 + cfg.tp1Fraction),
+        stopLoss,
+        takeProfit1,
         status: "OPEN",
         paper,
         entryOrderId,
@@ -351,6 +374,13 @@ export class AutoTrader {
           risk_level: signal.risk_level,
           spot: signal.price,
           selected,
+          tpSource,
+          aiPremium: {
+            entry: signal.premium_entry ?? null,
+            target_1: signal.premium_target_1 ?? null,
+            target_2: signal.premium_target_2 ?? null,
+            scaledTp: aiTp,
+          },
           planned: {
             notionalInr: fillCostInr,
             notionalUsd,
@@ -359,6 +389,9 @@ export class AutoTrader {
             contractValue: selected.contractValue,
             usdInr,
             budget,
+            stopLoss,
+            takeProfit1,
+            slFraction: cfg.slFraction,
           },
         } as object,
       },
@@ -366,7 +399,7 @@ export class AutoTrader {
 
     this.pushActivity(
       "trade",
-      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${size} @ ${fillPremium.toFixed(2)} (≈₹${fillCostInr.toFixed(0)})`,
+      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${size} @ ${fillPremium.toFixed(2)} (≈₹${fillCostInr.toFixed(0)}) SL ${stopLoss.toFixed(2)} TP ${takeProfit1.toFixed(2)} [${tpSource}]`,
       {
         symbol: sym,
         details: {
@@ -377,6 +410,9 @@ export class AutoTrader {
           notionalInr: fillCostInr,
           paper,
           confidence: signal.confidence,
+          tpSource,
+          stopLoss,
+          takeProfit1,
         },
       },
     );

@@ -103,7 +103,20 @@ export default async function signalRoutes(app: FastifyInstance) {
       });
 
       // Fire-and-forget cautious Delta entry (respects AUTONOMOUS_TRADING + risk caps)
-      void getAutoTrader(app.prisma, app.log).onSignal(signal);
+      void getAutoTrader(app.prisma, app.log).onSignal({
+        symbol: signal.symbol,
+        timeframe: signal.timeframe,
+        direction: signal.direction,
+        confidence: signal.confidence,
+        risk_level: signal.risk_level,
+        price: signal.price,
+        insufficient_data: signal.insufficient_data,
+        premium_entry: premium
+          ? (premium.entry_low + premium.entry_high) / 2
+          : option?.premium_usd ?? null,
+        premium_target_1: premium?.target_1 ?? null,
+        premium_target_2: premium?.target_2 ?? null,
+      });
 
       return reply.send(signal);
     } catch (err) {
