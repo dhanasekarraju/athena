@@ -11,6 +11,7 @@ export interface DeltaTicker {
   open_interest?: string | number;
   strike_price?: string | number;
   contract_type?: string;
+  contract_value?: string | number;
   close?: string;
   spot_price?: string;
   expiry_time?: number;

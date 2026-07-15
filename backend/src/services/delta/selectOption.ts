@@ -25,6 +25,23 @@ export interface SelectedDeltaOption {
   bid: number;
   ask: number;
   openInterest: number;
+  /** Underlying units per 1 contract (BTC opts ~0.001, ETH ~0.01). */
+  contractValue: number;
+}
+
+function defaultContractValue(symbol: string): number {
+  const u = symbol.toUpperCase();
+  if (u.includes("BTC")) return 0.001;
+  if (u.includes("ETH")) return 0.01;
+  return 1;
+}
+
+/**
+ * USD cash to open/close 1 contract ≈ premium(USD/unit) × contract_value.
+ */
+export function contractCostUsd(premium: number, contractValue: number): number {
+  const cv = contractValue > 0 ? contractValue : 1;
+  return premium * cv;
 }
 
 /**
@@ -86,6 +103,7 @@ export function selectDeltaOption(
 
   const best = pool[0];
   const { bid, ask } = bidAsk(best.t);
+  const contractValue = toFinite(best.t.contract_value, defaultContractValue(best.t.symbol));
   return {
     productId: best.t.product_id,
     productSymbol: best.t.symbol,
@@ -97,5 +115,11 @@ export function selectDeltaOption(
     bid,
     ask,
     openInterest: Number(best.t.open_interest ?? 0),
+    contractValue,
   };
+}
+
+function toFinite(v: unknown, fallback: number): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }

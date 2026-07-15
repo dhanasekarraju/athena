@@ -60,7 +60,8 @@ class PortfolioScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Open notional ≈ ${(stats['openNotional'] as num?)?.toStringAsFixed(0) ?? '0'}'
+                  'Open ≈ ₹${(stats['openNotional'] as num?)?.toStringAsFixed(0) ?? '0'}'
+                  ' · uPnL ₹${(stats['openUnrealizedPnl'] as num?)?.toStringAsFixed(0) ?? '0'}'
                   ' · Paper ${stats['openPaper'] ?? 0} / Live ${stats['openLive'] ?? 0}',
                   style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
@@ -115,6 +116,9 @@ class PortfolioScreen extends ConsumerWidget {
     final reason = p['exitReason']?.toString();
     final sl = (p['stopLoss'] as num?)?.toDouble();
     final tp = (p['takeProfit1'] as num?)?.toDouble();
+    final entryCostLabel = (p['entryCostInr'] as num?)?.toStringAsFixed(0);
+    final markPremium = (p['markPremium'] as num?)?.toDouble();
+    final unrealized = (p['unrealizedPnlInr'] as num?)?.toDouble();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -133,15 +137,29 @@ class PortfolioScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '$product ×${size.toStringAsFixed(0)} @ ${entry.toStringAsFixed(2)}',
+            entryCostLabel == null
+                ? '$product ×${size.toStringAsFixed(0)} @ ${entry.toStringAsFixed(2)}'
+                : '$product ×${size.toStringAsFixed(0)} @ ${entry.toStringAsFixed(2)} · ≈₹$entryCostLabel',
             style: const TextStyle(fontSize: 13),
           ),
-          if (open && sl != null && tp != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              'SL ${sl.toStringAsFixed(2)} · TP ${tp.toStringAsFixed(2)}',
-              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-            ),
+          if (open) ...[
+            if (markPremium != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                'mark ${markPremium.toStringAsFixed(2)} · uPnL ₹${unrealized?.toStringAsFixed(0) ?? '—'}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: (unrealized ?? 0) >= 0 ? AppColors.bullish : AppColors.bearish,
+                ),
+              ),
+            ],
+            if (sl != null && tp != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                'SL ${sl.toStringAsFixed(2)} · TP ${tp.toStringAsFixed(2)}',
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
           ],
           if (!open) ...[
             const SizedBox(height: 4),
@@ -149,7 +167,7 @@ class PortfolioScreen extends ConsumerWidget {
               [
                 if (exit != null) 'exit ${exit.toStringAsFixed(2)}',
                 if (reason != null) reason,
-                if (pnl != null) 'pnl ${pnl.toStringAsFixed(2)}',
+                if (pnl != null) 'pnl ₹${pnl.toStringAsFixed(0)}',
               ].join(' · '),
               style: TextStyle(
                 fontSize: 12,

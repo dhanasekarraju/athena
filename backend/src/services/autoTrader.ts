@@ -3,8 +3,37 @@ import type { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { env } from "../utils/env.js";
 import { DeltaClient } from "./delta/client.js";
-import { selectDeltaOption } from "./delta/selectOption.js";
+import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
+
+function defaultContractValue(symbol: string): number {
+  const u = symbol.toUpperCase();
+  if (u.includes("BTC")) return 0.001;
+  if (u.includes("ETH")) return 0.01;
+  return 1;
+}
+
+function positionCostInr(
+  entryPremium: number,
+  size: number,
+  productSymbol: string,
+  snapshot: unknown,
+  usdInr: number,
+): number {
+  const snap = snapshot as {
+    selected?: { contractValue?: number };
+    planned?: { costInr?: number; contractValue?: number };
+  } | null;
+  if (snap?.planned?.costInr && snap.planned.costInr > 0) {
+    // planned.costInr was for the whole fill
+    return snap.planned.costInr;
+  }
+  const cv =
+    snap?.selected?.contractValue ??
+    snap?.planned?.contractValue ??
+    defaultContractValue(productSymbol);
+  return contractCostUsd(entryPremium, cv) * size * usdInr;
+}
 
 export interface AutonSignal {
   symbol: string;
@@ -190,13 +219,17 @@ export class AutoTrader {
 
   private async tryEnter(signal: AutonSignal, cfg: RuntimeBotConfig): Promise<void> {
     const sym = signal.symbol.toUpperCase();
+    const usdInr = env.USD_INR_RATE;
     const open = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
-    const openExposure = open.reduce((s, p) => s + p.entryPremium * p.size, 0);
+    const openExposure = open.reduce(
+      (s, p) => s + positionCostInr(p.entryPremium, p.size, p.productSymbol, p.signalSnapshot, usdInr),
+      0,
+    );
     const room = cfg.maxOpenExposureInr - openExposure;
     if (room < 50) {
       this.pushActivity("skip", `${sym} skipped — exposure limit`, {
         symbol: sym,
-        details: { openExposure, room },
+        details: { openExposure: Math.round(openExposure), room: Math.round(room) },
       });
       this.log.info({ openExposure, room }, "Skip auto entry: exposure limit reached");
       return;
@@ -228,22 +261,37 @@ export class AutoTrader {
       return;
     }
 
+    const costPerContractUsd = contractCostUsd(premium, selected.contractValue);
+    const costPerContractInr = costPerContractUsd * usdInr;
+    if (costPerContractInr <= 0) return;
+
     const budget = Math.min(cfg.maxOrderInr, room);
-    const size = Math.floor(budget / premium);
+    const size = Math.floor(budget / costPerContractInr);
     if (size < 1) {
       this.pushActivity(
         "skip",
-        `${sym} skipped — 1× ${selected.productSymbol} costs ₹${premium.toFixed(0)} > max ₹${budget}`,
-        { symbol: sym, details: { premium, budget, product: selected.productSymbol } },
+        `${sym} skipped — 1× ${selected.productSymbol} ≈ ₹${costPerContractInr.toFixed(0)} > max ₹${budget}`,
+        {
+          symbol: sym,
+          details: {
+            premiumUsd: premium,
+            contractValue: selected.contractValue,
+            costPerContractUsd,
+            costPerContractInr,
+            budget,
+            product: selected.productSymbol,
+          },
+        },
       );
       this.log.info(
-        { premium, budget, symbol: selected.productSymbol },
+        { premium, costPerContractInr, budget, symbol: selected.productSymbol },
         "Skip auto entry: 1 contract costs more than max order",
       );
       return;
     }
 
-    const notional = size * premium;
+    const notionalInr = size * costPerContractInr;
+    const notionalUsd = size * costPerContractUsd;
     const clientOrderId = `ath-in-${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 
     let entryOrderId: string | null = null;
@@ -253,7 +301,15 @@ export class AutoTrader {
     if (paper) {
       entryOrderId = `paper-${clientOrderId}`;
       this.log.warn(
-        { paper: true, product: selected.productSymbol, size, premium, notional },
+        {
+          paper: true,
+          product: selected.productSymbol,
+          size,
+          premium,
+          contractValue: selected.contractValue,
+          notionalInr,
+          notionalUsd,
+        },
         "PAPER buy (no live order)",
       );
     } else {
@@ -268,6 +324,9 @@ export class AutoTrader {
       fillPremium = Number(order.average_fill_price || premium) || premium;
       this.log.info({ orderId: entryOrderId, product: selected.productSymbol, size }, "LIVE buy submitted");
     }
+
+    const fillCostInr =
+      contractCostUsd(fillPremium, selected.contractValue) * size * usdInr;
 
     await this.prisma.botPosition.create({
       data: {
@@ -289,21 +348,30 @@ export class AutoTrader {
           risk_level: signal.risk_level,
           spot: signal.price,
           selected,
-          planned: { notional, budget },
+          planned: {
+            notionalInr: fillCostInr,
+            notionalUsd,
+            costInr: fillCostInr,
+            costPerContractInr,
+            contractValue: selected.contractValue,
+            usdInr,
+            budget,
+          },
         } as object,
       },
     });
 
     this.pushActivity(
       "trade",
-      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${size} @ ${fillPremium.toFixed(2)}`,
+      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${size} @ ${fillPremium.toFixed(2)} (≈₹${fillCostInr.toFixed(0)})`,
       {
         symbol: sym,
         details: {
           product: selected.productSymbol,
           size,
           premium: fillPremium,
-          notional,
+          contractValue: selected.contractValue,
+          notionalInr: fillCostInr,
           paper,
           confidence: signal.confidence,
         },
@@ -317,55 +385,64 @@ export class AutoTrader {
     const open = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
     for (const pos of open) {
       try {
-        await this.checkExit(pos.id, pos.productSymbol, pos.entryPremium, pos.stopLoss, pos.takeProfit1, pos.size, pos.paper);
+        await this.checkExit(pos);
       } catch (err) {
         this.log.error({ err, id: pos.id }, "AutoTrader exit check failed");
       }
     }
-    // keep cfg referenced for future use (poll cadence stays from env)
     void cfg;
   }
 
-  private async checkExit(
-    id: string,
-    productSymbol: string,
-    entry: number,
-    stopLoss: number,
-    takeProfit1: number,
-    size: number,
-    paper: boolean,
-  ): Promise<void> {
-    const ticker = await this.client.getTicker(productSymbol);
+  private async checkExit(pos: {
+    id: string;
+    productId: number;
+    productSymbol: string;
+    entryPremium: number;
+    stopLoss: number;
+    takeProfit1: number;
+    size: number;
+    paper: boolean;
+    signalSnapshot: unknown;
+  }): Promise<void> {
+    const ticker = await this.client.getTicker(pos.productSymbol);
     const mark = this.client.markPrice(ticker);
     if (mark <= 0) return;
 
     let reason: string | null = null;
-    if (mark <= stopLoss) reason = "stop_loss";
-    else if (mark >= takeProfit1) reason = "take_profit_1";
+    if (mark <= pos.stopLoss) reason = "stop_loss";
+    else if (mark >= pos.takeProfit1) reason = "take_profit_1";
     if (!reason) return;
 
     let exitOrderId: string | null = null;
-    if (paper || !this.client.configured) {
-      exitOrderId = `paper-exit-${id.slice(0, 12)}`;
-      this.log.warn({ paper: true, productSymbol, mark, reason }, "PAPER sell");
+    if (pos.paper || !this.client.configured) {
+      exitOrderId = `paper-exit-${pos.id.slice(0, 12)}`;
+      this.log.warn({ paper: true, productSymbol: pos.productSymbol, mark, reason }, "PAPER sell");
     } else {
-      const pos = await this.prisma.botPosition.findUnique({ where: { id } });
-      if (!pos) return;
       const order = await this.client.placeMarketOrder({
         productId: pos.productId,
-        productSymbol,
+        productSymbol: pos.productSymbol,
         side: "sell",
-        size,
+        size: pos.size,
         clientOrderId: `ath-out-${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         reduceOnly: true,
       });
       exitOrderId = String(order.id);
-      this.log.info({ exitOrderId, productSymbol, mark, reason }, "LIVE sell submitted");
+      this.log.info({ exitOrderId, productSymbol: pos.productSymbol, mark, reason }, "LIVE sell submitted");
     }
 
-    const pnl = (mark - entry) * size;
+    const snap = pos.signalSnapshot as {
+      selected?: { contractValue?: number };
+      planned?: { contractValue?: number };
+    } | null;
+    const cv =
+      snap?.selected?.contractValue ??
+      snap?.planned?.contractValue ??
+      defaultContractValue(pos.productSymbol);
+    const pnlUsd = (mark - pos.entryPremium) * pos.size * cv;
+    const pnl = pnlUsd * env.USD_INR_RATE;
+
     await this.prisma.botPosition.update({
-      where: { id },
+      where: { id: pos.id },
       data: {
         status: "CLOSED",
         exitOrderId,
@@ -378,9 +455,9 @@ export class AutoTrader {
 
     this.pushActivity(
       "exit",
-      `${paper ? "PAPER" : "LIVE"} EXIT ${productSymbol} (${reason}) mark=${mark.toFixed(2)} pnl=${pnl.toFixed(2)}`,
+      `${pos.paper ? "PAPER" : "LIVE"} EXIT ${pos.productSymbol} (${reason}) mark=${mark.toFixed(2)} pnl≈₹${pnl.toFixed(0)}`,
       {
-        details: { productSymbol, reason, mark, pnl, paper },
+        details: { productSymbol: pos.productSymbol, reason, mark, pnl, paper: pos.paper },
       },
     );
   }

@@ -30,6 +30,8 @@ const EnvSchema = z.object({
   SL_FRACTION: z.coerce.number().default(0.4), // sell if premium drops 40%
   TP1_FRACTION: z.coerce.number().default(0.5), // take profit +50%
   BOT_POLL_MS: z.coerce.number().default(15000),
+  /** Used to size Delta USD-quoted options against INR risk caps */
+  USD_INR_RATE: z.coerce.number().default(85),
 });
 
 export const env = EnvSchema.parse(process.env);

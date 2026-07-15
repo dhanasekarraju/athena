@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { env } from "../utils/env.js";
+import { DeltaClient } from "../services/delta/client.js";
 
 const TradeSchema = z.object({
   symbol: z.string(),
@@ -68,7 +70,6 @@ export default async function portfolioRoutes(app: FastifyInstance) {
     const manualWins = manualClosed.filter((t) => (t.pnl ?? 0) > 0).length;
     const manualPnl = manualClosed.reduce((acc, t) => acc + (t.pnl ?? 0), 0);
 
-    // Auto-trader (paper + live) positions — primary portfolio for bot users
     const botOpen = await app.prisma.botPosition.findMany({
       where: { status: "OPEN" },
       orderBy: { openedAt: "desc" },
@@ -82,8 +83,53 @@ export default async function portfolioRoutes(app: FastifyInstance) {
     const botLosses = botClosed.filter((p) => (p.realizedPnl ?? 0) <= 0).length;
     const botPnl = botClosed.reduce((acc, p) => acc + (p.realizedPnl ?? 0), 0);
     const botClosedCount = botClosed.length;
-    // Approximate open notional (premium * size); mark-to-market not stored here
-    const openNotional = botOpen.reduce((acc, p) => acc + p.entryPremium * p.size, 0);
+
+    const client = DeltaClient.fromEnv(env);
+
+    const defaultCv = (sym: string) => {
+      const u = sym.toUpperCase();
+      if (u.includes("BTC")) return 0.001;
+      if (u.includes("ETH")) return 0.01;
+      return 1;
+    };
+    const costInr = (p: (typeof botOpen)[0], mark?: number) => {
+      const snap = p.signalSnapshot as {
+        selected?: { contractValue?: number };
+        planned?: { costInr?: number; contractValue?: number };
+      } | null;
+      if (snap?.planned?.costInr && mark === undefined) return snap.planned.costInr;
+      const cv = snap?.selected?.contractValue ?? snap?.planned?.contractValue ?? defaultCv(p.productSymbol);
+      const px = mark ?? p.entryPremium;
+      return px * cv * p.size * env.USD_INR_RATE;
+    };
+
+    const enrichedOpen = [];
+    for (const p of botOpen) {
+      let mark = p.entryPremium;
+      try {
+        const t = await client.getTicker(p.productSymbol);
+        const m = client.markPrice(t);
+        if (m > 0) mark = m;
+      } catch {
+        // keep entry as mark fallback
+      }
+      const snap = p.signalSnapshot as { selected?: { contractValue?: number }; planned?: { contractValue?: number } } | null;
+      const cv = snap?.selected?.contractValue ?? snap?.planned?.contractValue ?? defaultCv(p.productSymbol);
+      const entryCost = costInr(p);
+      const markCost = mark * cv * p.size * env.USD_INR_RATE;
+      const unrealizedInr = markCost - entryCost;
+      enrichedOpen.push({
+        ...p,
+        markPremium: mark,
+        contractValue: cv,
+        entryCostInr: Math.round(entryCost * 100) / 100,
+        markCostInr: Math.round(markCost * 100) / 100,
+        unrealizedPnlInr: Math.round(unrealizedInr * 100) / 100,
+      });
+    }
+
+    const openNotional = enrichedOpen.reduce((acc, p) => acc + p.entryCostInr, 0);
+    const openUnrealized = enrichedOpen.reduce((acc, p) => acc + p.unrealizedPnlInr, 0);
     const openPaper = botOpen.filter((p) => p.paper).length;
     const openLive = botOpen.length - openPaper;
 
@@ -94,7 +140,6 @@ export default async function portfolioRoutes(app: FastifyInstance) {
     const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
 
     return reply.send({
-      // Headline stats driven by bot trades
       totalTrades,
       wins,
       losses,
@@ -102,11 +147,12 @@ export default async function portfolioRoutes(app: FastifyInstance) {
       totalPnl: Math.round(totalPnl * 100) / 100,
       openCount: botOpen.length,
       openNotional: Math.round(openNotional * 100) / 100,
+      openUnrealizedPnl: Math.round(openUnrealized * 100) / 100,
       openPaper,
       openLive,
-      openPositions: botOpen,
+      currencyNote: "Risk caps & PnL are approx INR (Delta premiums are USD × contract_value × USD_INR_RATE)",
+      openPositions: enrichedOpen,
       recentClosed: botClosed.slice(0, 20),
-      // Keep manual journal totals for secondary display if needed
       manual: {
         totalTrades: manualTotal,
         wins: manualWins,
