@@ -70,12 +70,16 @@ export default async function portfolioRoutes(app: FastifyInstance) {
     const manualWins = manualClosed.filter((t) => (t.pnl ?? 0) > 0).length;
     const manualPnl = manualClosed.reduce((acc, t) => acc + (t.pnl ?? 0), 0);
 
+    const cfg = await app.prisma.botConfig.findUnique({ where: { id: "default" } });
+    const paperMode = cfg?.paperTrading ?? true;
+    const modeFilter = { paper: paperMode };
+
     const botOpen = await app.prisma.botPosition.findMany({
-      where: { status: "OPEN" },
+      where: { status: "OPEN", ...modeFilter },
       orderBy: { openedAt: "desc" },
     });
     const botClosed = await app.prisma.botPosition.findMany({
-      where: { status: "CLOSED" },
+      where: { status: "CLOSED", ...modeFilter },
       orderBy: { closedAt: "desc" },
       take: 50,
     });
@@ -129,18 +133,15 @@ export default async function portfolioRoutes(app: FastifyInstance) {
     }
 
     const botClosedAll = await app.prisma.botPosition.findMany({
-      where: { status: "CLOSED" },
+      where: { status: "CLOSED", ...modeFilter },
       select: { realizedPnl: true },
     });
     const realizedAll = botClosedAll.reduce((acc, p) => acc + (p.realizedPnl ?? 0), 0);
 
     const openNotional = enrichedOpen.reduce((acc, p) => acc + p.entryCostInr, 0);
     const openUnrealized = enrichedOpen.reduce((acc, p) => acc + p.unrealizedPnlInr, 0);
-    const openPaper = botOpen.filter((p) => p.paper).length;
-    const openLive = botOpen.length - openPaper;
-
-    const cfg = await app.prisma.botConfig.findUnique({ where: { id: "default" } });
-    const paperMode = cfg?.paperTrading ?? true;
+    const openPaper = paperMode ? botOpen.length : 0;
+    const openLive = paperMode ? 0 : botOpen.length;
 
     let deltaUsdAvailable: number | null = null;
     let availableBalanceInr: number;
@@ -160,7 +161,9 @@ export default async function portfolioRoutes(app: FastifyInstance) {
     }
 
     const totalPnlCombined = Math.round((realizedAll + openUnrealized) * 100) / 100;
-    const equityInr = Math.round((availableBalanceInr + openNotional + openUnrealized) * 100) / 100;
+    const equityInr = paperMode
+      ? Math.round((availableBalanceInr + openNotional + openUnrealized) * 100) / 100
+      : Math.round((availableBalanceInr + openUnrealized) * 100) / 100;
 
     const totalTrades = botClosedCount;
     const wins = botWins;
@@ -174,7 +177,6 @@ export default async function portfolioRoutes(app: FastifyInstance) {
       losses,
       winRate: Math.round(winRate * 10) / 10,
       totalPnl: Math.round(totalPnl * 100) / 100,
-      /** Closed + open unrealized (headline PnL) */
       totalPnlInr: totalPnlCombined,
       realizedPnlInr: Math.round(realizedAll * 100) / 100,
       openCount: botOpen.length,
@@ -188,7 +190,9 @@ export default async function portfolioRoutes(app: FastifyInstance) {
       equityInr,
       paperStartInr: env.PAPER_BALANCE_INR,
       deltaUsdAvailable,
-      currencyNote: "Risk caps & PnL are approx INR (Delta premiums are USD × contract_value × USD_INR_RATE)",
+      currencyNote: paperMode
+        ? "Paper mode — stats are paper-only"
+        : "Live mode — stats are live-only (paper history cleared on switch)",
       openPositions: enrichedOpen,
       recentClosed: botClosed.slice(0, 20),
       manual: {

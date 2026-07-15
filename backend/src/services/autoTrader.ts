@@ -392,6 +392,14 @@ export class AutoTrader {
     void cfg;
   }
 
+  /** Wipe all paper BotPositions (used when switching to live). */
+  async clearPaperBook(reason = "switched_to_live"): Promise<number> {
+    const result = await this.prisma.botPosition.deleteMany({ where: { paper: true } });
+    this.pushActivity("info", `Paper book cleared (${result.count} rows) — ${reason}`);
+    this.log.warn({ count: result.count, reason }, "Paper BotPosition rows deleted");
+    return result.count;
+  }
+
   /** Manual close from Portfolio UI (paper or live). */
   async closePosition(id: string): Promise<{ ok: true; pnl: number; mark: number; paper: boolean }> {
     const pos = await this.prisma.botPosition.findUnique({ where: { id } });

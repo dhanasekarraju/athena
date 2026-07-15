@@ -70,22 +70,34 @@ export default async function botRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
+    const trader = getAutoTrader(app.prisma, app.log);
+    const prev = await getBotConfig(app.prisma);
+
     // Live trading requires Delta keys on the server
     if (parsed.data.paperTrading === false) {
-      const status = await getAutoTrader(app.prisma, app.log).status();
+      const status = await trader.status();
       if (!status.deltaConfigured) {
         return reply.code(400).send({
           error: "Cannot disable paper trading: DELTA_API_KEY / DELTA_API_SECRET not set on server",
         });
       }
     }
+
     const cfg = await updateBotConfig(app.prisma, parsed.data);
-    const status = await getAutoTrader(app.prisma, app.log).status();
-    app.log.info({ cfg }, "BotConfig updated from UI");
+
+    // Switching paper → live: wipe paper trades so P&L/positions start clean for live
+    let paperCleared = 0;
+    if (prev.paperTrading === true && cfg.paperTrading === false) {
+      paperCleared = await trader.clearPaperBook("switched_to_live");
+    }
+
+    const status = await trader.status();
+    app.log.info({ cfg, paperCleared }, "BotConfig updated from UI");
     return {
       ...cfg,
       killed: status.killed,
       deltaConfigured: status.deltaConfigured,
+      paperCleared,
     };
   });
 
