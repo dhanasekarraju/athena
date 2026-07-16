@@ -421,7 +421,16 @@ export class AutoTrader {
   async monitorOpenPositions(): Promise<void> {
     const cfg = await getBotConfig(this.prisma);
     const open = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
-    for (const pos of open) {
+    // Sync live books: if closed on Delta outside the app, mark Athena closed
+    if (!cfg.paperTrading && this.client.configured) {
+      try {
+        await this.syncExternalCloses(open.filter((p) => !p.paper));
+      } catch (err) {
+        this.log.error({ err }, "Delta position sync failed");
+      }
+    }
+    const stillOpen = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
+    for (const pos of stillOpen) {
       try {
         await this.checkExit(pos);
       } catch (err) {
@@ -429,6 +438,47 @@ export class AutoTrader {
       }
     }
     void cfg;
+  }
+
+  /**
+   * If a live Athena OPEN position no longer exists (or size 0) on Delta,
+   * close it locally without placing another sell order.
+   */
+  private async syncExternalCloses(
+    liveOpen: Array<{
+      id: string;
+      productId: number;
+      productSymbol: string;
+      entryPremium: number;
+      size: number;
+      paper: boolean;
+      signalSnapshot: unknown;
+    }>,
+  ): Promise<void> {
+    if (!liveOpen.length) return;
+    const exchange = await this.client.getOpenMarginedPositions();
+    const byProduct = new Map(exchange.map((p) => [p.productId, p]));
+    const bySymbol = new Map(exchange.map((p) => [p.productSymbol.toUpperCase(), p]));
+
+    for (const pos of liveOpen) {
+      const remote = byProduct.get(pos.productId) ?? bySymbol.get(pos.productSymbol.toUpperCase());
+      if (remote && Math.abs(remote.size) > 0) continue;
+
+      let mark = pos.entryPremium;
+      try {
+        const t = await this.client.getTicker(pos.productSymbol);
+        const m = this.client.markPrice(t);
+        if (m > 0) mark = m;
+      } catch {
+        // keep entry
+      }
+      this.pushActivity(
+        "exit",
+        `Synced close ${pos.productSymbol} — already flat on Delta`,
+        { symbol: pos.productSymbol, details: { mark, reason: "external_close" } },
+      );
+      await this.executeExit(pos, mark, "external_close", { skipExchangeOrder: true });
+    }
   }
 
   /** Wipe all paper BotPositions (used when switching to live). */
@@ -449,6 +499,27 @@ export class AutoTrader {
     let mark = this.client.markPrice(ticker);
     if (mark <= 0) mark = pos.entryPremium;
     return this.executeExit(pos, mark, "manual_close");
+  }
+
+  /**
+   * Mark an Athena position closed to match exchange (no Delta order).
+   * Used when user already closed on Delta app/website.
+   */
+  async markClosedExternal(id: string): Promise<{ ok: true; pnl: number; mark: number }> {
+    const pos = await this.prisma.botPosition.findUnique({ where: { id } });
+    if (!pos || pos.status !== "OPEN") {
+      throw Object.assign(new Error("Position not found or already closed"), { statusCode: 404 });
+    }
+    let mark = pos.entryPremium;
+    try {
+      const t = await this.client.getTicker(pos.productSymbol);
+      const m = this.client.markPrice(t);
+      if (m > 0) mark = m;
+    } catch {
+      // keep entry
+    }
+    const result = await this.executeExit(pos, mark, "external_close", { skipExchangeOrder: true });
+    return { ok: true, pnl: result.pnl, mark: result.mark };
   }
 
   private async checkExit(pos: {
@@ -486,11 +557,16 @@ export class AutoTrader {
     },
     mark: number,
     reason: string,
+    opts: { skipExchangeOrder?: boolean } = {},
   ): Promise<{ ok: true; pnl: number; mark: number; paper: boolean }> {
     let exitOrderId: string | null = null;
-    if (pos.paper || !this.client.configured) {
-      exitOrderId = `paper-exit-${pos.id.slice(0, 12)}`;
-      this.log.warn({ paper: true, productSymbol: pos.productSymbol, mark, reason }, "PAPER sell");
+    const skipEx = opts.skipExchangeOrder === true || reason === "external_close";
+    if (pos.paper || !this.client.configured || skipEx) {
+      exitOrderId = skipEx ? `external-${pos.id.slice(0, 12)}` : `paper-exit-${pos.id.slice(0, 12)}`;
+      this.log.warn(
+        { paper: pos.paper, skipExchangeOrder: skipEx, productSymbol: pos.productSymbol, mark, reason },
+        skipEx ? "External/sync close (no Delta sell)" : "PAPER sell",
+      );
     } else {
       const order = await this.client.placeMarketOrder({
         productId: pos.productId,

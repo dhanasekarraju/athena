@@ -153,6 +153,32 @@ export class DeltaClient {
     }
   }
 
+  /** Live option/futures positions with non-zero size. */
+  async getOpenMarginedPositions(): Promise<
+    Array<{ productId: number; productSymbol: string; size: number; entryPrice: number }>
+  > {
+    const result = await this.request<Array<Record<string, unknown>>>("GET", "/v2/positions/margined", {
+      auth: true,
+    });
+    const rows = Array.isArray(result) ? result : [];
+    const out: Array<{ productId: number; productSymbol: string; size: number; entryPrice: number }> = [];
+    for (const p of rows) {
+      const size = toNum(p.size);
+      if (size === 0) continue;
+      const product = (p.product as Record<string, unknown> | undefined) ?? {};
+      const productId = toNum(product.id ?? p.product_id);
+      const productSymbol = String(product.symbol ?? p.product_symbol ?? "");
+      if (!productId || !productSymbol) continue;
+      out.push({
+        productId,
+        productSymbol,
+        size,
+        entryPrice: toNum(p.entry_price ?? p.average_open_price),
+      });
+    }
+    return out;
+  }
+
   async placeMarketOrder(input: {
     productId: number;
     productSymbol: string;
