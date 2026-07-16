@@ -1,7 +1,7 @@
 /**
- * Hard entry filters for AutoTrader.
- * These sit on top of BotConfig so a loose Settings UI (low minConfidence,
- * skipHighRisk off) cannot re-open the noisy entries that caused most stop-outs.
+ * Soft entry filters for AutoTrader.
+ * Confidence / High-risk stay fully under BotConfig (Settings UI) — options
+ * signals often sit near ~32 and High risk is normal, so we do not hard-floor those.
  */
 
 export interface EntryGuardInput {
@@ -20,20 +20,9 @@ export interface EntryGuardInput {
 export interface EntryGuardResult {
   ok: boolean;
   reason?: string;
-  /** Effective confidence floor used for this symbol */
   requiredConfidence: number;
   details?: Record<string, unknown>;
 }
-
-/** Soft floor so Settings minConfidence=32 cannot enter noise. */
-export const ABSOLUTE_MIN_CONFIDENCE = 40;
-
-/** ETH has been the bleed — demand a higher bar than BTC. */
-export const ETH_EXTRA_CONFIDENCE = 15;
-export const ETH_ABSOLUTE_MIN_CONFIDENCE = 50;
-
-/** High-risk entries only allowed when conviction is strong. */
-export const HIGH_RISK_MIN_CONFIDENCE = 55;
 
 /** Skip ultra-noisy 1m signals for auto-entry. */
 export const BLOCKED_ENTRY_TIMEFRAMES = new Set(["1m", "1min", "1"]);
@@ -41,13 +30,8 @@ export const BLOCKED_ENTRY_TIMEFRAMES = new Set(["1m", "1min", "1"]);
 /** Minutes to wait after a stop-loss before re-entering the same underlying. */
 export const STOP_LOSS_COOLDOWN_MS = 45 * 60 * 1000;
 
-export function requiredConfidenceForSymbol(symbol: string, minConfidence: number): number {
-  const sym = symbol.toUpperCase();
-  const base = Math.max(minConfidence, ABSOLUTE_MIN_CONFIDENCE);
-  if (sym === "ETH") {
-    return Math.max(base + ETH_EXTRA_CONFIDENCE, ETH_ABSOLUTE_MIN_CONFIDENCE, minConfidence + ETH_EXTRA_CONFIDENCE);
-  }
-  return base;
+export function requiredConfidenceForSymbol(_symbol: string, minConfidence: number): number {
+  return minConfidence;
 }
 
 export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
@@ -78,24 +62,16 @@ export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
     };
   }
 
-  const isHigh = input.riskLevel === "High";
-  if (isHigh) {
-    // Even when skipHighRisk is off, High risk needs strong conviction.
-    if (input.skipHighRisk || input.confidence < HIGH_RISK_MIN_CONFIDENCE) {
-      return {
-        ok: false,
-        reason: input.skipHighRisk
-          ? "High risk filter"
-          : `High risk needs confidence >= ${HIGH_RISK_MIN_CONFIDENCE}`,
-        requiredConfidence: required,
-        details: {
-          risk_level: input.riskLevel,
-          confidence: input.confidence,
-          highRiskMin: HIGH_RISK_MIN_CONFIDENCE,
-          skipHighRisk: input.skipHighRisk,
-        },
-      };
-    }
+  if (input.skipHighRisk && input.riskLevel === "High") {
+    return {
+      ok: false,
+      reason: "High risk filter",
+      requiredConfidence: required,
+      details: {
+        risk_level: input.riskLevel,
+        skipHighRisk: input.skipHighRisk,
+      },
+    };
   }
 
   if (input.lastStopLossAt) {

@@ -1,29 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  ABSOLUTE_MIN_CONFIDENCE,
-  ETH_ABSOLUTE_MIN_CONFIDENCE,
-  HIGH_RISK_MIN_CONFIDENCE,
   STOP_LOSS_COOLDOWN_MS,
   evaluateEntryGuards,
   requiredConfidenceForSymbol,
 } from "./entryGuards.js";
 
 describe("requiredConfidenceForSymbol", () => {
-  it("applies absolute floor for BTC", () => {
-    expect(requiredConfidenceForSymbol("BTC", 32)).toBe(ABSOLUTE_MIN_CONFIDENCE);
-  });
-
-  it("keeps higher user minConfidence for BTC", () => {
-    expect(requiredConfidenceForSymbol("BTC", 55)).toBe(55);
-  });
-
-  it("demands higher bar for ETH", () => {
-    // soft floor 40 + 15 extra = 55 (also >= ETH absolute 50)
-    expect(requiredConfidenceForSymbol("ETH", 32)).toBe(55);
-    expect(requiredConfidenceForSymbol("ETH", 45)).toBe(60);
-    expect(requiredConfidenceForSymbol("ETH", 32)).toBeGreaterThanOrEqual(
-      ETH_ABSOLUTE_MIN_CONFIDENCE,
-    );
+  it("uses Settings minConfidence as-is for BTC and ETH", () => {
+    expect(requiredConfidenceForSymbol("BTC", 32)).toBe(32);
+    expect(requiredConfidenceForSymbol("ETH", 32)).toBe(32);
+    expect(requiredConfidenceForSymbol("ETH", 45)).toBe(45);
   });
 });
 
@@ -31,8 +17,8 @@ describe("evaluateEntryGuards", () => {
   const base = {
     symbol: "BTC",
     direction: "BUY_CALL",
-    confidence: 55,
-    riskLevel: "Medium",
+    confidence: 32,
+    riskLevel: "High",
     timeframe: "15m",
     minConfidence: 32,
     skipHighRisk: false,
@@ -44,31 +30,14 @@ describe("evaluateEntryGuards", () => {
     expect(r.reason).toMatch(/timeframe/i);
   });
 
-  it("blocks low confidence even when Settings allow 32", () => {
-    const r = evaluateEntryGuards({ ...base, confidence: 32 });
-    expect(r.ok).toBe(false);
-    expect(r.requiredConfidence).toBe(ABSOLUTE_MIN_CONFIDENCE);
-  });
-
-  it("blocks High risk below strong-conviction floor", () => {
-    const r = evaluateEntryGuards({
-      ...base,
-      confidence: 50,
-      riskLevel: "High",
-      skipHighRisk: false,
-    });
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/High risk/i);
-  });
-
-  it("allows High risk when conviction is strong and skipHighRisk is off", () => {
-    const r = evaluateEntryGuards({
-      ...base,
-      confidence: HIGH_RISK_MIN_CONFIDENCE,
-      riskLevel: "High",
-      skipHighRisk: false,
-    });
+  it("allows typical 32 / High risk when Settings allow it", () => {
+    const r = evaluateEntryGuards(base);
     expect(r.ok).toBe(true);
+  });
+
+  it("blocks below Settings minConfidence", () => {
+    const r = evaluateEntryGuards({ ...base, confidence: 31 });
+    expect(r.ok).toBe(false);
   });
 
   it("honors skipHighRisk when enabled", () => {
@@ -81,22 +50,20 @@ describe("evaluateEntryGuards", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("blocks ETH below ETH floor", () => {
+  it("allows High risk when skipHighRisk is off", () => {
     const r = evaluateEntryGuards({
       ...base,
-      symbol: "ETH",
-      confidence: 45,
-      riskLevel: "Medium",
+      confidence: 32,
+      riskLevel: "High",
+      skipHighRisk: false,
     });
-    expect(r.ok).toBe(false);
-    expect(r.requiredConfidence).toBe(55);
+    expect(r.ok).toBe(true);
   });
 
   it("enforces stop-loss cooldown", () => {
     const now = Date.now();
     const r = evaluateEntryGuards({
       ...base,
-      confidence: 70,
       lastStopLossAt: new Date(now - 10 * 60 * 1000).toISOString(),
       nowMs: now,
     });
@@ -108,7 +75,6 @@ describe("evaluateEntryGuards", () => {
     const now = Date.now();
     const r = evaluateEntryGuards({
       ...base,
-      confidence: 70,
       lastStopLossAt: new Date(now - STOP_LOSS_COOLDOWN_MS - 1000).toISOString(),
       nowMs: now,
     });
