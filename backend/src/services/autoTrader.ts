@@ -5,6 +5,7 @@ import { env } from "../utils/env.js";
 import { DeltaClient } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
+import { buildEntryLevels, contractsToSell, decideLongExit, decideSignalSell } from "./exitLogic.js";
 
 function defaultContractValue(symbol: string): number {
   const u = symbol.toUpperCase();
@@ -43,10 +44,11 @@ export interface AutonSignal {
   risk_level: string;
   price: number;
   insufficient_data?: boolean;
-  /** AI option premium plan (USD). TP uses these; SL stays settings-based. */
+  /** AI option premium plan (USD). TP1 + SL used independently; TP2 ignored for auto-exit. */
   premium_entry?: number | null;
   premium_target_1?: number | null;
   premium_target_2?: number | null;
+  premium_stop_loss?: number | null;
 }
 
 export type BotActivityLevel = "info" | "skip" | "trade" | "exit" | "error";
@@ -148,6 +150,15 @@ export class AutoTrader {
     const cfg = await getBotConfig(this.prisma);
     const sym = signal.symbol.toUpperCase();
 
+    // Signal-driven exits run for CALL/PUT/HOLD — decide how much to sell from thesis change.
+    if (cfg.autonomousEnabled && !this.killed && cfg.symbols.includes(sym)) {
+      try {
+        await this.maybeSignalExit(signal, cfg);
+      } catch (err) {
+        this.log.error({ err, symbol: sym }, "Signal-driven exit failed");
+      }
+    }
+
     if (signal.direction !== "BUY_CALL" && signal.direction !== "BUY_PUT") {
       return;
     }
@@ -218,6 +229,97 @@ export class AutoTrader {
       this.log.error({ err, signal }, "AutoTrader entry failed");
     } finally {
       this.busy = false;
+    }
+  }
+
+  /**
+   * Use the latest AI signal to decide whether / how much of an open book to sell.
+   * Price TP/SL remain a separate safety net in the monitor loop.
+   */
+  private async maybeSignalExit(signal: AutonSignal, cfg: RuntimeBotConfig): Promise<void> {
+    const sym = signal.symbol.toUpperCase();
+    const paperMode = cfg.paperTrading || !this.client.configured;
+    const open = await this.prisma.botPosition.findMany({
+      where: { status: "OPEN", underlying: sym, paper: paperMode },
+    });
+    if (!open.length) return;
+
+    for (const pos of open) {
+      const snap = (pos.signalSnapshot ?? {}) as {
+        signalExit?: {
+          soldFractionOfOriginal?: number;
+          lastAt?: string;
+          lastReason?: string;
+          lastConfidence?: number;
+        };
+        originalSize?: number;
+        peakExitPx?: number;
+      };
+      const originalSize = snap.originalSize ?? pos.size;
+      const alreadySoldFraction = Math.max(
+        0,
+        Math.min(1, 1 - pos.size / Math.max(originalSize, pos.size)),
+      );
+      const soldTracked = snap.signalExit?.soldFractionOfOriginal ?? alreadySoldFraction;
+
+      // Cooldown: ignore weaker/similar signal exits within 3 minutes (flips always allowed)
+      const lastAt = snap.signalExit?.lastAt ? Date.parse(snap.signalExit.lastAt) : 0;
+      const isFlip =
+        (pos.direction === "BUY_CALL" && signal.direction === "BUY_PUT") ||
+        (pos.direction === "BUY_PUT" && signal.direction === "BUY_CALL");
+      if (
+        !isFlip &&
+        lastAt > 0 &&
+        Date.now() - lastAt < 3 * 60 * 1000 &&
+        (signal.confidence ?? 0) <= (snap.signalExit?.lastConfidence ?? 0) + 5
+      ) {
+        continue;
+      }
+
+      const decision = decideSignalSell({
+        positionDirection: pos.direction,
+        signalDirection: signal.direction,
+        confidence: signal.confidence,
+        minConfidence: cfg.minConfidence,
+        alreadySoldFraction: soldTracked,
+        riskLevel: signal.risk_level,
+      });
+      const sellSize = contractsToSell(pos.size, decision.fraction);
+      if (!decision.reason || sellSize <= 0) continue;
+
+      let exitPx = pos.entryPremium;
+      try {
+        const t = await this.client.getTicker(pos.productSymbol);
+        const bid = this.client.bestBid(t);
+        const mark = this.client.markPrice(t);
+        exitPx = bid > 0 ? bid : mark > 0 ? mark : pos.entryPremium;
+      } catch {
+        // keep entry
+      }
+
+      this.pushActivity(
+        "exit",
+        `Signal sell ${pos.productSymbol} ×${sellSize}/${pos.size} (${decision.reason}) conf=${signal.confidence} — ${decision.detail}`,
+        {
+          symbol: sym,
+          details: {
+            reason: decision.reason,
+            sellSize,
+            openSize: pos.size,
+            confidence: signal.confidence,
+            signalDirection: signal.direction,
+          },
+        },
+      );
+
+      await this.executeExit(pos, exitPx, decision.reason, {
+        sellSize,
+        signalMeta: {
+          confidence: signal.confidence,
+          direction: signal.direction,
+          detail: decision.detail,
+        },
+      });
     }
   }
 
@@ -332,24 +434,17 @@ export class AutoTrader {
       this.log.info({ orderId: entryOrderId, product: selected.productSymbol, size }, "LIVE buy submitted");
     }
 
-    // SL: settings fraction. TP: AI premium plan (prefer TP2 so winners can run further).
-    const stopLoss = fillPremium * (1 - cfg.slFraction);
-    const aiEntry =
-      signal.premium_entry && signal.premium_entry > 0 ? signal.premium_entry : fillPremium;
-    const scale = fillPremium / aiEntry;
-    const aiTpRaw =
-      (signal.premium_target_2 && signal.premium_target_2 > 0
-        ? signal.premium_target_2
-        : null) ??
-      (signal.premium_target_1 && signal.premium_target_1 > 0
-        ? signal.premium_target_1
-        : null);
-    const aiTp = aiTpRaw != null ? aiTpRaw * scale : null;
-    const fallbackTp = fillPremium * (1 + cfg.tp1Fraction);
-    // Use AI TP when it is meaningfully above entry; otherwise settings fallback
-    const takeProfit1 =
-      aiTp != null && aiTp > fillPremium * 1.05 ? aiTp : fallbackTp;
-    const tpSource = aiTp != null && aiTp > fillPremium * 1.05 ? "ai" : "settings";
+    // SL + TP1 independent: tighter of settings/AI for SL; AI TP1 capped near settings (never wait for TP2).
+    const levels = buildEntryLevels({
+      fillPremium,
+      slFraction: cfg.slFraction,
+      tp1Fraction: cfg.tp1Fraction,
+      aiEntry: signal.premium_entry,
+      aiTp1: signal.premium_target_1,
+      aiTp2: signal.premium_target_2,
+      aiSl: signal.premium_stop_loss,
+    });
+    const { stopLoss, takeProfit1, tpSource, slSource } = levels;
 
     const fillCostInr =
       contractCostUsd(fillPremium, selected.contractValue) * size * usdInr;
@@ -375,11 +470,14 @@ export class AutoTrader {
           spot: signal.price,
           selected,
           tpSource,
+          slSource,
+          peakExitPx: fillPremium,
+          originalSize: size,
           aiPremium: {
             entry: signal.premium_entry ?? null,
             target_1: signal.premium_target_1 ?? null,
             target_2: signal.premium_target_2 ?? null,
-            scaledTp: aiTp,
+            stop_loss: signal.premium_stop_loss ?? null,
           },
           planned: {
             notionalInr: fillCostInr,
@@ -392,6 +490,7 @@ export class AutoTrader {
             stopLoss,
             takeProfit1,
             slFraction: cfg.slFraction,
+            tp1Fraction: cfg.tp1Fraction,
           },
         } as object,
       },
@@ -399,7 +498,7 @@ export class AutoTrader {
 
     this.pushActivity(
       "trade",
-      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${size} @ ${fillPremium.toFixed(2)} (≈₹${fillCostInr.toFixed(0)}) SL ${stopLoss.toFixed(2)} TP ${takeProfit1.toFixed(2)} [${tpSource}]`,
+      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${size} @ ${fillPremium.toFixed(2)} (≈₹${fillCostInr.toFixed(0)}) SL ${stopLoss.toFixed(2)} [${slSource}] TP ${takeProfit1.toFixed(2)} [${tpSource}]`,
       {
         symbol: sym,
         details: {
@@ -411,6 +510,7 @@ export class AutoTrader {
           paper,
           confidence: signal.confidence,
           tpSource,
+          slSource,
           stopLoss,
           takeProfit1,
         },
@@ -533,16 +633,63 @@ export class AutoTrader {
     paper: boolean;
     signalSnapshot: unknown;
   }): Promise<void> {
+    const cfg = await getBotConfig(this.prisma);
     const ticker = await this.client.getTicker(pos.productSymbol);
-    const mark = this.client.markPrice(ticker);
-    if (mark <= 0) return;
+    const quotes = {
+      bid: this.client.bestBid(ticker),
+      ask: this.client.bestAsk(ticker),
+      mark: this.client.markPrice(ticker),
+    };
+    if (quotes.bid <= 0 && quotes.mark <= 0) return;
 
-    let reason: string | null = null;
-    if (mark <= pos.stopLoss) reason = "stop_loss";
-    else if (mark >= pos.takeProfit1) reason = "take_profit_1";
-    if (!reason) return;
+    const snap = (pos.signalSnapshot ?? {}) as {
+      peakExitPx?: number;
+      planned?: { tp1Fraction?: number };
+    };
+    const settingsTp =
+      pos.entryPremium * (1 + (snap.planned?.tp1Fraction ?? cfg.tp1Fraction));
 
-    await this.executeExit(pos, mark, reason);
+    const decision = decideLongExit(quotes, {
+      entryPremium: pos.entryPremium,
+      stopLoss: pos.stopLoss,
+      takeProfit1: pos.takeProfit1,
+      settingsTp,
+      peakExitPx: snap.peakExitPx ?? pos.entryPremium,
+    });
+
+    // Persist peak so trail SL can arm on later ticks
+    if (decision.peakExitPx > (snap.peakExitPx ?? 0)) {
+      await this.prisma.botPosition.update({
+        where: { id: pos.id },
+        data: {
+          signalSnapshot: { ...snap, peakExitPx: decision.peakExitPx } as object,
+        },
+      });
+    }
+
+    if (!decision.reason) {
+      // Near levels: helpful live-log breadcrumbs (not every hold)
+      const nearSl =
+        decision.exitPx > 0 && decision.exitPx <= decision.effectiveSl * 1.08;
+      const nearTp =
+        decision.exitPx > 0 && decision.exitPx >= decision.effectiveTp * 0.92;
+      if (nearSl || nearTp) {
+        this.log.info(
+          {
+            id: pos.id,
+            product: pos.productSymbol,
+            ...quotes,
+            effectiveSl: decision.effectiveSl,
+            effectiveTp: decision.effectiveTp,
+            detail: decision.detail,
+          },
+          "AutoTrader near exit levels",
+        );
+      }
+      return;
+    }
+
+    await this.executeExit(pos, decision.exitPx, decision.reason);
   }
 
   private async executeExit(
@@ -554,52 +701,142 @@ export class AutoTrader {
       size: number;
       paper: boolean;
       signalSnapshot: unknown;
+      realizedPnl?: number | null;
     },
     mark: number,
     reason: string,
-    opts: { skipExchangeOrder?: boolean } = {},
+    opts: {
+      skipExchangeOrder?: boolean;
+      sellSize?: number;
+      signalMeta?: { confidence: number; direction: string; detail: string };
+    } = {},
   ): Promise<{ ok: true; pnl: number; mark: number; paper: boolean }> {
+    const sellSize = Math.min(pos.size, Math.max(0, opts.sellSize ?? pos.size));
+    if (sellSize <= 0) {
+      return { ok: true, pnl: 0, mark, paper: pos.paper };
+    }
+    const remaining = Math.max(0, pos.size - sellSize);
+    const partial = remaining > 0;
+
     let exitOrderId: string | null = null;
     const skipEx = opts.skipExchangeOrder === true || reason === "external_close";
     if (pos.paper || !this.client.configured || skipEx) {
-      exitOrderId = skipEx ? `external-${pos.id.slice(0, 12)}` : `paper-exit-${pos.id.slice(0, 12)}`;
+      exitOrderId = skipEx
+        ? `external-${pos.id.slice(0, 12)}`
+        : `paper-exit-${pos.id.slice(0, 12)}`;
       this.log.warn(
-        { paper: pos.paper, skipExchangeOrder: skipEx, productSymbol: pos.productSymbol, mark, reason },
-        skipEx ? "External/sync close (no Delta sell)" : "PAPER sell",
+        {
+          paper: pos.paper,
+          skipExchangeOrder: skipEx,
+          productSymbol: pos.productSymbol,
+          mark,
+          reason,
+          sellSize,
+          remaining,
+        },
+        skipEx ? "External/sync close (no Delta sell)" : partial ? "PAPER partial sell" : "PAPER sell",
       );
     } else {
       const order = await this.client.placeMarketOrder({
         productId: pos.productId,
         productSymbol: pos.productSymbol,
         side: "sell",
-        size: pos.size,
+        size: sellSize,
         clientOrderId: `ath-out-${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         reduceOnly: true,
       });
       exitOrderId = String(order.id);
-      this.log.info({ exitOrderId, productSymbol: pos.productSymbol, mark, reason }, "LIVE sell submitted");
+      this.log.info(
+        { exitOrderId, productSymbol: pos.productSymbol, mark, reason, sellSize, remaining },
+        partial ? "LIVE partial sell submitted" : "LIVE sell submitted",
+      );
     }
 
-    const snap = pos.signalSnapshot as {
+    const snap = (pos.signalSnapshot ?? {}) as {
       selected?: { contractValue?: number };
       planned?: { contractValue?: number };
-    } | null;
+      originalSize?: number;
+      signalExit?: {
+        soldFractionOfOriginal?: number;
+        lastAt?: string;
+        lastReason?: string;
+        lastConfidence?: number;
+      };
+      peakExitPx?: number;
+    };
     const cv =
-      snap?.selected?.contractValue ??
-      snap?.planned?.contractValue ??
+      snap.selected?.contractValue ??
+      snap.planned?.contractValue ??
       defaultContractValue(pos.productSymbol);
-    const pnlUsd = (mark - pos.entryPremium) * pos.size * cv;
+    const pnlUsd = (mark - pos.entryPremium) * sellSize * cv;
     const pnl = pnlUsd * env.USD_INR_RATE;
+    const originalSize = snap.originalSize ?? pos.size;
+    const soldFractionOfOriginal =
+      (snap.signalExit?.soldFractionOfOriginal ?? 0) + sellSize / Math.max(1, originalSize);
+
+    if (partial) {
+      await this.prisma.botPosition.update({
+        where: { id: pos.id },
+        data: {
+          size: remaining,
+          realizedPnl: (pos.realizedPnl ?? 0) + pnl,
+          exitOrderId,
+          exitPremium: mark,
+          exitReason: reason,
+          signalSnapshot: {
+            ...snap,
+            originalSize,
+            signalExit: {
+              soldFractionOfOriginal: Math.min(1, soldFractionOfOriginal),
+              lastAt: new Date().toISOString(),
+              lastReason: reason,
+              lastConfidence: opts.signalMeta?.confidence,
+              lastDirection: opts.signalMeta?.direction,
+              detail: opts.signalMeta?.detail,
+            },
+          } as object,
+        },
+      });
+      this.pushActivity(
+        "exit",
+        `${pos.paper ? "PAPER" : "LIVE"} PARTIAL ${pos.productSymbol} (${reason}) sold×${sellSize} left×${remaining} @${mark.toFixed(2)} pnl≈₹${pnl.toFixed(0)}`,
+        {
+          details: {
+            productSymbol: pos.productSymbol,
+            reason,
+            mark,
+            pnl,
+            sellSize,
+            remaining,
+            paper: pos.paper,
+          },
+        },
+      );
+      return { ok: true, pnl, mark, paper: pos.paper };
+    }
 
     await this.prisma.botPosition.update({
       where: { id: pos.id },
       data: {
         status: "CLOSED",
+        size: 0,
         exitOrderId,
         exitPremium: mark,
         exitReason: reason,
-        realizedPnl: pnl,
+        realizedPnl: (pos.realizedPnl ?? 0) + pnl,
         closedAt: new Date(),
+        signalSnapshot: {
+          ...snap,
+          originalSize,
+          signalExit: {
+            soldFractionOfOriginal: 1,
+            lastAt: new Date().toISOString(),
+            lastReason: reason,
+            lastConfidence: opts.signalMeta?.confidence,
+            lastDirection: opts.signalMeta?.direction,
+            detail: opts.signalMeta?.detail,
+          },
+        } as object,
       },
     });
 

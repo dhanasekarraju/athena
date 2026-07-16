@@ -205,6 +205,14 @@ export class DeltaClient {
   markPrice(t: DeltaTicker): number {
     return toNum(t.quotes?.mark_price ?? t.mark_price ?? t.close);
   }
+
+  bestBid(t: DeltaTicker): number {
+    return toNum(t.quotes?.best_bid ?? t.best_bid);
+  }
+
+  bestAsk(t: DeltaTicker): number {
+    return toNum(t.quotes?.best_ask ?? t.best_ask);
+  }
 }
 
 /** Parse Delta option symbol forms like C-BTC-65000-240726. */

@@ -161,7 +161,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const Text('Exit rules', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 8),
                     Text(
-                      'Stop loss: −${(draft.slFraction * 100).toStringAsFixed(0)}%  ·  Take profit: +${(draft.tp1Fraction * 100).toStringAsFixed(0)}%',
+                      'SL & TP run independently every ~5s on the live bid. '
+                      'Fresh signals also decide how much to sell: flip → full/partial, HOLD → scale out, fade → trim. '
+                      'Stop −${(draft.slFraction * 100).toStringAsFixed(0)}%  ·  Take +${(draft.tp1Fraction * 100).toStringAsFixed(0)}%',
                       style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
                     ),
                     Slider(
