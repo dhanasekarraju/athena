@@ -5,6 +5,7 @@ import { env } from "../utils/env.js";
 import { DeltaClient } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
+import { evaluateEntryGuards, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
 import { buildEntryLevels, contractsToSell, decideLongExit, decideSignalSell } from "./exitLogic.js";
 
 function defaultContractValue(symbol: string): number {
@@ -190,27 +191,49 @@ export class AutoTrader {
       this.log.info({ symbol: signal.symbol }, "Skip auto entry: insufficient data");
       return;
     }
-    if (signal.confidence < cfg.minConfidence) {
-      this.pushActivity(
-        "skip",
-        `${sym} ${signal.direction} skipped — confidence ${signal.confidence} < ${cfg.minConfidence}`,
-        {
-          symbol: sym,
-          details: { confidence: signal.confidence, minConfidence: cfg.minConfidence },
-        },
-      );
-      this.log.info(
-        { symbol: signal.symbol, confidence: signal.confidence },
-        "Skip auto entry: confidence below threshold",
-      );
-      return;
-    }
-    if (cfg.skipHighRisk && signal.risk_level === "High") {
-      this.pushActivity("skip", `${sym} skipped — High risk filter`, {
+
+    const paperMode = cfg.paperTrading || !this.client.configured;
+    const recentStop = await this.prisma.botPosition.findFirst({
+      where: {
+        underlying: sym,
+        status: "CLOSED",
+        exitReason: "stop_loss",
+        paper: paperMode,
+        closedAt: { gte: new Date(Date.now() - STOP_LOSS_COOLDOWN_MS) },
+      },
+      orderBy: { closedAt: "desc" },
+      select: { closedAt: true },
+    });
+
+    const guard = evaluateEntryGuards({
+      symbol: sym,
+      direction: signal.direction,
+      confidence: signal.confidence,
+      riskLevel: signal.risk_level,
+      timeframe: signal.timeframe,
+      minConfidence: cfg.minConfidence,
+      skipHighRisk: cfg.skipHighRisk,
+      lastStopLossAt: recentStop?.closedAt?.toISOString() ?? null,
+    });
+    if (!guard.ok) {
+      this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${guard.reason}`, {
         symbol: sym,
-        details: { risk_level: signal.risk_level },
+        details: {
+          ...guard.details,
+          requiredConfidence: guard.requiredConfidence,
+          timeframe: signal.timeframe,
+        },
       });
-      this.log.info({ symbol: signal.symbol }, "Skip auto entry: High risk");
+      this.log.info(
+        {
+          symbol: signal.symbol,
+          reason: guard.reason,
+          confidence: signal.confidence,
+          requiredConfidence: guard.requiredConfidence,
+          timeframe: signal.timeframe,
+        },
+        "Skip auto entry: entry guard",
+      );
       return;
     }
 
