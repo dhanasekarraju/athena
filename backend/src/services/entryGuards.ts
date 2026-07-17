@@ -30,8 +30,9 @@ export const BLOCKED_ENTRY_TIMEFRAMES = new Set(["1m", "1min", "1"]);
 /**
  * Wait after a stop-loss before re-entering the same underlying.
  * Blocks revenge re-entries across different strikes of BTC/ETH.
+ * 25m with minConfidence ≥40: enough to break a losing streak, not half a session idle.
  */
-export const STOP_LOSS_COOLDOWN_MS = 45 * 60 * 1000;
+export const STOP_LOSS_COOLDOWN_MS = 25 * 60 * 1000;
 
 export function requiredConfidenceForSymbol(_symbol: string, minConfidence: number): number {
   return minConfidence;
