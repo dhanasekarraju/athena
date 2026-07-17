@@ -27,11 +27,8 @@ export interface EntryGuardResult {
 /** Skip ultra-noisy 1m signals for auto-entry. */
 export const BLOCKED_ENTRY_TIMEFRAMES = new Set(["1m", "1min", "1"]);
 
-/**
- * Wait after a stop-loss before re-entering the same underlying.
- * 15m: short enough for crypto minute-moves, long enough to avoid instant revenge re-entries.
- */
-export const STOP_LOSS_COOLDOWN_MS = 15 * 60 * 1000;
+/** Minutes to wait after a stop-loss before re-entering the same underlying. */
+export const STOP_LOSS_COOLDOWN_MS = 45 * 60 * 1000;
 
 export function requiredConfidenceForSymbol(_symbol: string, minConfidence: number): number {
   return minConfidence;
