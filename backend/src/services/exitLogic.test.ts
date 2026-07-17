@@ -90,7 +90,7 @@ describe("decideLongExit", () => {
     expect(d.reason).toBeNull();
   });
 
-  it("trails after +15% and exits on giveback", () => {
+  it("arms trail after +10% and exits on small giveback (locks profit)", () => {
     const peak = decideLongExit(
       { bid: 120, ask: 125, mark: 122 },
       { ...base, peakExitPx: 100 },
@@ -98,12 +98,23 @@ describe("decideLongExit", () => {
     expect(peak.reason).toBeNull();
     expect(peak.peakExitPx).toBe(120);
 
+    // peak 120 → trail floor 120*0.93=111.6; minLock 100*1.08=108 → effSl≈111.6
     const drop = decideLongExit(
-      { bid: 100, ask: 105, mark: 102 },
+      { bid: 110, ask: 112, mark: 111 },
       { ...base, peakExitPx: 120 },
     );
-    // trail floor = 120 * 0.85 = 102; breakeven 101; bid 100 <= effSl
-    expect(drop.reason).toMatch(/trail_stop|protect_breakeven/);
+    expect(drop.reason).toBe("trail_stop");
+    expect(drop.effectiveSl).toBeGreaterThanOrEqual(111);
+  });
+
+  it("does not allow trail to collapse to a tiny green exit", () => {
+    // Big peak then dump toward entry — must still lock ~+8%, not ₹1 green
+    const d = decideLongExit(
+      { bid: 102, ask: 104, mark: 103 },
+      { ...base, peakExitPx: 159 },
+    );
+    expect(d.reason).toMatch(/trail_stop|protect_breakeven/);
+    expect(d.effectiveSl).toBeGreaterThanOrEqual(100 * 1.08);
   });
 
   it("SL wins over TP if both would fire", () => {

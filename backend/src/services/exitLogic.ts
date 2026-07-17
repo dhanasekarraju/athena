@@ -17,10 +17,15 @@ export interface ExitLevels {
   settingsTp?: number;
   /** Peak exit price seen so far (for trailing). */
   peakExitPx?: number;
-  /** Activate trail after this multiple of entry (default 1.15 = +15%). */
+  /** Activate trail after this multiple of entry (default 1.10 = +10%). */
   trailArmAt?: number;
-  /** Give-back from peak once trailing (default 0.15 = 15%). */
+  /** Give-back from peak once trailing (default 0.07 = 7%). */
   trailGiveback?: number;
+  /**
+   * Once trail is armed, never let the floor fall back to a tiny green exit.
+   * Default 1.08 = lock at least +8% vs entry (stops the "sold for ₹1 profit" case).
+   */
+  trailMinLockMultiple?: number;
 }
 
 export type ExitReason =
@@ -83,21 +88,24 @@ export function decideLongExit(q: ExitQuotes, levels: ExitLevels): ExitDecision 
   const effectiveTp =
     settingsTp != null ? Math.min(levels.takeProfit1, settingsTp) : levels.takeProfit1;
 
-  const trailArmAt = levels.trailArmAt ?? 1.15;
-  const trailGiveback = levels.trailGiveback ?? 0.15;
+  // Trail is aggressive about locking gains; hard SL stays conservative (unchanged).
+  const trailArmAt = levels.trailArmAt ?? 1.1;
+  const trailGiveback = levels.trailGiveback ?? 0.07;
+  const trailMinLockMultiple = levels.trailMinLockMultiple ?? 1.08;
   let effectiveSl = levels.stopLoss;
 
   const armed = peakExitPx >= levels.entryPremium * trailArmAt;
   if (armed) {
     const trailFloor = peakExitPx * (1 - trailGiveback);
-    const breakeven = levels.entryPremium * 1.01;
-    effectiveSl = Math.max(levels.stopLoss, breakeven, trailFloor);
+    // Once we've been meaningfully green, don't ride back down to a ₹1 win.
+    const minLock = levels.entryPremium * trailMinLockMultiple;
+    effectiveSl = Math.max(levels.stopLoss, minLock, trailFloor);
   }
 
   if (slProbe > 0 && slProbe <= effectiveSl) {
     const reason: ExitReason =
       armed && effectiveSl > levels.stopLoss
-        ? slProbe <= levels.entryPremium * 1.01
+        ? slProbe <= levels.entryPremium * trailMinLockMultiple
           ? "protect_breakeven"
           : "trail_stop"
         : "stop_loss";
