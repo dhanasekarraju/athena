@@ -46,7 +46,10 @@ export function contractCostUsd(premium: number, contractValue: number): number 
 
 /**
  * Pick a Delta option for a directional signal.
- * Prefer DTE 3–14, ~1 ATR OTM, then highest OI.
+ *
+ * Prefer DTE 3–14 and a slightly ITM → ATM strike (not far OTM).
+ * Example: spot 1800 PUT → ~1825 (already in the money if thesis is "goes below 1800").
+ * Example: spot 64000 CALL → ~63500. Avoid deep ITM (budget) and far OTM (lottery).
  */
 export function selectDeltaOption(
   tickers: DeltaTicker[],
@@ -60,7 +63,16 @@ export function selectDeltaOption(
   const optionType = opts.direction === "BUY_CALL" ? "call" : "put";
   const now = opts.now ?? new Date();
   const atr = opts.atr && opts.atr > 0 ? opts.atr : opts.spot * 0.01;
-  const target = opts.spot + (optionType === "call" ? atr : -atr);
+
+  // Slightly ITM target (~0.35 ATR). Puts above spot, calls below spot.
+  const target =
+    optionType === "call" ? opts.spot - 0.35 * atr : opts.spot + 0.35 * atr;
+
+  // Allowed moneyness band around spot.
+  const minStrike =
+    optionType === "call" ? opts.spot - 1.0 * atr : opts.spot - 0.5 * atr;
+  const maxStrike =
+    optionType === "call" ? opts.spot + 0.5 * atr : opts.spot + 1.0 * atr;
 
   type Cand = {
     t: DeltaTicker;
@@ -75,8 +87,7 @@ export function selectDeltaOption(
     if (!meta || meta.optionType !== optionType) continue;
     const dte = (meta.expiryMs - now.getTime()) / 86_400_000;
     if (dte < 2) continue;
-    if (optionType === "call" && meta.strike < opts.spot) continue;
-    if (optionType === "put" && meta.strike > opts.spot) continue;
+    if (meta.strike < minStrike || meta.strike > maxStrike) continue;
     const mark = markPrice(t);
     if (mark <= 0) continue;
     cands.push({ t, meta, dte, mark });
