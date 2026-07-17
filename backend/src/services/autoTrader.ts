@@ -262,15 +262,25 @@ export class AutoTrader {
       );
       const soldTracked = snap.signalExit?.soldFractionOfOriginal ?? alreadySoldFraction;
 
-      // Cooldown: ignore weaker/similar signal exits within 3 minutes (flips always allowed)
-      const lastAt = snap.signalExit?.lastAt ? Date.parse(snap.signalExit.lastAt) : 0;
       const isFlip =
         (pos.direction === "BUY_CALL" && signal.direction === "BUY_PUT") ||
         (pos.direction === "BUY_PUT" && signal.direction === "BUY_CALL");
+
+      // Grace period: a fresh position gets time to work before signal-driven
+      // trims apply (price SL/TP/trail still protect it every ~5s). Without this
+      // the 30s poller sells seconds after entry. Strong flips are still allowed.
+      const ageMs = Date.now() - new Date(pos.openedAt).getTime();
+      const strongFlip = isFlip && (signal.confidence ?? 0) >= Math.max(cfg.minConfidence, 65);
+      if (ageMs < 10 * 60 * 1000 && !strongFlip) {
+        continue;
+      }
+
+      // Cooldown: ignore weaker/similar signal exits within 10 minutes (flips always allowed)
+      const lastAt = snap.signalExit?.lastAt ? Date.parse(snap.signalExit.lastAt) : 0;
       if (
         !isFlip &&
         lastAt > 0 &&
-        Date.now() - lastAt < 3 * 60 * 1000 &&
+        Date.now() - lastAt < 10 * 60 * 1000 &&
         (signal.confidence ?? 0) <= (snap.signalExit?.lastConfidence ?? 0) + 5
       ) {
         continue;
