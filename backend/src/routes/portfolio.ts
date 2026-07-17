@@ -100,9 +100,11 @@ export default async function portfolioRoutes(app: FastifyInstance) {
       const snap = p.signalSnapshot as {
         selected?: { contractValue?: number };
         planned?: { costInr?: number; contractValue?: number };
+        originalSize?: number;
       } | null;
-      if (snap?.planned?.costInr && mark === undefined) return snap.planned.costInr;
       const cv = snap?.selected?.contractValue ?? snap?.planned?.contractValue ?? defaultCv(p.productSymbol);
+      // Always price × remaining size. Do NOT use planned.costInr as-is:
+      // that value is for originalSize and makes unrealized deeply negative after partial exits.
       const px = mark ?? p.entryPremium;
       return px * cv * p.size * env.USD_INR_RATE;
     };
