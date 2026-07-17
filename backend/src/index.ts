@@ -13,6 +13,7 @@ import portfolioRoutes from "./routes/portfolio.js";
 import botRoutes from "./routes/bot.js";
 import liveWebsocket from "./websocket/live.js";
 import { getAutoTrader } from "./services/autoTrader.js";
+import { getSignalPoller } from "./services/signalPoller.js";
 
 const app = Fastify({
   logger: {
@@ -52,6 +53,11 @@ async function main() {
   const trader = getAutoTrader(app.prisma, app.log);
   trader.startMonitor();
   app.log.info(await trader.status(), "AutoTrader status");
+
+  // Fetch signals on the server so buys/signal-exits work without the phone open.
+  const poller = getSignalPoller(app.prisma, app.log);
+  poller.start();
+  app.log.info(poller.status, "SignalPoller status");
 }
 
 main().catch((err) => {
