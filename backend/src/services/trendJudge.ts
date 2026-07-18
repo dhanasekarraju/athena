@@ -111,7 +111,8 @@ async function askGemini(symbol: string, log: FastifyBaseLogger): Promise<TrendV
     `- "up": clear short-term upward momentum a call buyer could ride within the hour`,
     `- "down": clear short-term downward momentum a put buyer could ride within the hour`,
     `- "chop": sideways / whipsaw conditions where option buyers bleed premium`,
-    `A fresh 1m/5m-level move against the 15m direction is still tradeable if momentum is clear.`,
+    `HARD RULE: answer "up" or "down" only if AT LEAST 2 of the 3 timeframes (1m, 5m, 15m) clearly show momentum in that same direction (any pair: 1m+5m, 1m+15m, or 5m+15m). If fewer than 2 agree, answer "chop".`,
+    `In the reason, name which timeframes agree (e.g. "1m+5m up, 15m flat").`,
     `Be conservative: when in doubt, answer "chop".`,
     `Respond with ONLY this JSON, no markdown: {"trend":"up"|"down"|"chop","strength":<0-100 integer conviction>,"reason":"<max 15 words>"}`,
   ].join("\n");
