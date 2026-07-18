@@ -35,7 +35,7 @@ const EnvSchema = z.object({
   /** Gemini trend judge: blocks entries against the trend / in chop. Empty key = disabled (fail-open). */
   GEMINI_API_KEY: z.string().default(""),
   TREND_JUDGE_MODEL: z.string().default("gemini-2.5-flash"),
-  TREND_JUDGE_TTL_MS: z.coerce.number().default(5 * 60 * 1000),
+  TREND_JUDGE_TTL_MS: z.coerce.number().default(2 * 60 * 1000),
   /** Used to size Delta USD-quoted options against INR risk caps */
   USD_INR_RATE: z.coerce.number().default(85),
   /** Virtual cash for paper trading equity display */

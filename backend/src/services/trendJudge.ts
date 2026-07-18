@@ -93,21 +93,25 @@ async function askGemini(symbol: string, log: FastifyBaseLogger): Promise<TrendV
   const pair = PAIRS[symbol];
   if (!pair || !env.GEMINI_API_KEY) return null;
 
-  const [m15, h1, h4] = await Promise.all([
-    fetchCloses(pair, "15m", 48),
-    fetchCloses(pair, "1h", 48),
-    fetchCloses(pair, "4h", 42),
+  // Horizons match the bot's actual hold time (10-45 min): 1m/5m are the
+  // heartbeat, 15m is the widest context. Anything slower (1h/4h) answers a
+  // swing-trading question the bot never asks.
+  const [m1, m5, m15] = await Promise.all([
+    fetchCloses(pair, "1m", 60), // last hour, minute by minute
+    fetchCloses(pair, "5m", 48), // last 4 hours
+    fetchCloses(pair, "15m", 48), // last 12 hours
   ]);
 
   const prompt = [
-    `You judge whether ${symbol}/USD is tradeable with long options (calls or puts) over the next 1-4 hours.`,
+    `You judge whether ${symbol}/USD is tradeable with long options (calls or puts) over the NEXT 15-60 MINUTES. Positions are held 10-45 minutes, so the 1m and 5m series matter most; 15m is context only.`,
+    seriesLine("1m", m1),
+    seriesLine("5m", m5),
     seriesLine("15m", m15),
-    seriesLine("1h", h1),
-    seriesLine("4h", h4),
     `Classify the current tradeable trend:`,
-    `- "up": clear upward momentum a call buyer could ride`,
-    `- "down": clear downward momentum a put buyer could ride`,
-    `- "chop": sideways / conflicting timeframes / whipsaw conditions where option buyers bleed premium`,
+    `- "up": clear short-term upward momentum a call buyer could ride within the hour`,
+    `- "down": clear short-term downward momentum a put buyer could ride within the hour`,
+    `- "chop": sideways / whipsaw conditions where option buyers bleed premium`,
+    `A fresh 1m/5m-level move against the 15m direction is still tradeable if momentum is clear.`,
     `Be conservative: when in doubt, answer "chop".`,
     `Respond with ONLY this JSON, no markdown: {"trend":"up"|"down"|"chop","strength":<0-100 integer conviction>,"reason":"<max 15 words>"}`,
   ].join("\n");
