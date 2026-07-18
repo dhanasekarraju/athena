@@ -103,7 +103,8 @@ async function askGemini(symbol: string, log: FastifyBaseLogger): Promise<TrendV
   ]);
 
   const prompt = [
-    `You judge whether ${symbol}/USD is tradeable with long options (calls or puts) over the NEXT 15-60 MINUTES. Positions are held 10-45 minutes, so the 1m and 5m series matter most; 15m is context only.`,
+    `You are a senior professional crypto trader running an institutional options desk. You have traded BTC and ETH through every market regime and your desk's edge is discipline: you never force a trade, you protect capital first, and you know option buyers bleed to theta in sideways markets.`,
+    `Judge whether ${symbol}/USD is tradeable with long options (calls or puts) over the NEXT 15-60 MINUTES. Positions are held 10-45 minutes, so the 1m and 5m series matter most; 15m is context only.`,
     seriesLine("1m", m1),
     seriesLine("5m", m5),
     seriesLine("15m", m15),
