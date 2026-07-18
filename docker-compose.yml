@@ -67,6 +67,7 @@ services:
       AUTONOMOUS_SYMBOLS: ${AUTONOMOUS_SYMBOLS:-BTC,ETH}
       USD_INR_RATE: ${USD_INR_RATE:-85}
       PAPER_BALANCE_INR: ${PAPER_BALANCE_INR:-10000}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       - "4000:4000"
     depends_on:

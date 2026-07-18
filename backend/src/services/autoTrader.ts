@@ -6,6 +6,7 @@ import { DeltaClient } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
 import { evaluateEntryGuards, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
+import { getTrendVerdict, verdictAllows } from "./trendJudge.js";
 import { buildEntryLevels, decideLongExit } from "./exitLogic.js";
 
 function defaultContractValue(symbol: string): number {
@@ -341,6 +342,27 @@ export class AutoTrader {
     if (open.some((p) => p.underlying === sym)) {
       this.pushActivity("skip", `${sym} skipped — already open on underlying`, { symbol: sym });
       this.log.info({ symbol: signal.symbol }, "Skip auto entry: already open on underlying");
+      return;
+    }
+
+    // Gemini trend judge: entry must agree with the higher-level trend; chop blocks.
+    // Fails open if the judge is unavailable.
+    const verdict = await getTrendVerdict(sym, this.log);
+    const trendGate = verdictAllows(signal.direction as "BUY_CALL" | "BUY_PUT", verdict);
+    if (!trendGate.ok) {
+      this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${trendGate.why}`, {
+        symbol: sym,
+        details: {
+          trend: verdict.trend,
+          strength: verdict.strength,
+          reason: verdict.reason,
+          confidence: signal.confidence,
+        },
+      });
+      this.log.info(
+        { symbol: sym, direction: signal.direction, verdict },
+        "Skip auto entry: trend judge",
+      );
       return;
     }
 
