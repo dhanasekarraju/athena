@@ -6,7 +6,7 @@ import { DeltaClient } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
 import { evaluateEntryGuards, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
-import { buildEntryLevels, contractsToSell, decideLongExit, decideSignalSell } from "./exitLogic.js";
+import { buildEntryLevels, decideLongExit } from "./exitLogic.js";
 
 function defaultContractValue(symbol: string): number {
   const u = symbol.toUpperCase();
@@ -256,11 +256,16 @@ export class AutoTrader {
   }
 
   /**
-   * Use the latest AI signal to decide whether / how much of an open book to sell.
-   * Price TP/SL remain a separate safety net in the monitor loop.
+   * Signal-driven exits are full-position only: one buy, one sell (fees matter).
+   * The single case is a real flip — the AI now says the opposite direction with
+   * entry-grade confidence. HOLD / fading confidence never sell; price SL/TP/trail
+   * in the monitor loop remain the safety net.
    */
   private async maybeSignalExit(signal: AutonSignal, cfg: RuntimeBotConfig): Promise<void> {
     const sym = signal.symbol.toUpperCase();
+    if (signal.direction !== "BUY_CALL" && signal.direction !== "BUY_PUT") return;
+    if ((signal.confidence ?? 0) < cfg.minConfidence) return;
+
     const paperMode = cfg.paperTrading || !this.client.configured;
     const open = await this.prisma.botPosition.findMany({
       where: { status: "OPEN", underlying: sym, paper: paperMode },
@@ -268,57 +273,15 @@ export class AutoTrader {
     if (!open.length) return;
 
     for (const pos of open) {
-      const snap = (pos.signalSnapshot ?? {}) as {
-        signalExit?: {
-          soldFractionOfOriginal?: number;
-          lastAt?: string;
-          lastReason?: string;
-          lastConfidence?: number;
-        };
-        originalSize?: number;
-        peakExitPx?: number;
-      };
-      const originalSize = snap.originalSize ?? pos.size;
-      const alreadySoldFraction = Math.max(
-        0,
-        Math.min(1, 1 - pos.size / Math.max(originalSize, pos.size)),
-      );
-      const soldTracked = snap.signalExit?.soldFractionOfOriginal ?? alreadySoldFraction;
-
       const isFlip =
         (pos.direction === "BUY_CALL" && signal.direction === "BUY_PUT") ||
         (pos.direction === "BUY_PUT" && signal.direction === "BUY_CALL");
+      if (!isFlip) continue;
 
-      // Grace period: a fresh position gets time to work before signal-driven
-      // trims apply (price SL/TP/trail still protect it every ~5s). Without this
-      // the 30s poller sells seconds after entry. Strong flips are still allowed.
+      // Grace period: give a fresh position time to work before a flip can
+      // close it (price SL/TP/trail still protect it every ~5s).
       const ageMs = Date.now() - new Date(pos.openedAt).getTime();
-      const strongFlip = isFlip && (signal.confidence ?? 0) >= Math.max(cfg.minConfidence, 65);
-      if (ageMs < 10 * 60 * 1000 && !strongFlip) {
-        continue;
-      }
-
-      // Cooldown: ignore weaker/similar signal exits within 10 minutes (flips always allowed)
-      const lastAt = snap.signalExit?.lastAt ? Date.parse(snap.signalExit.lastAt) : 0;
-      if (
-        !isFlip &&
-        lastAt > 0 &&
-        Date.now() - lastAt < 10 * 60 * 1000 &&
-        (signal.confidence ?? 0) <= (snap.signalExit?.lastConfidence ?? 0) + 5
-      ) {
-        continue;
-      }
-
-      const decision = decideSignalSell({
-        positionDirection: pos.direction,
-        signalDirection: signal.direction,
-        confidence: signal.confidence,
-        minConfidence: cfg.minConfidence,
-        alreadySoldFraction: soldTracked,
-        riskLevel: signal.risk_level,
-      });
-      const sellSize = contractsToSell(pos.size, decision.fraction);
-      if (!decision.reason || sellSize <= 0) continue;
+      if (ageMs < 10 * 60 * 1000) continue;
 
       let exitPx = pos.entryPremium;
       try {
@@ -332,25 +295,24 @@ export class AutoTrader {
 
       this.pushActivity(
         "exit",
-        `Signal sell ${pos.productSymbol} ×${sellSize}/${pos.size} (${decision.reason}) conf=${signal.confidence} — ${decision.detail}`,
+        `Signal flip exit ${pos.productSymbol} ×${pos.size} (full) conf=${signal.confidence} — AI now ${signal.direction}`,
         {
           symbol: sym,
           details: {
-            reason: decision.reason,
-            sellSize,
-            openSize: pos.size,
+            reason: "signal_flip",
+            sellSize: pos.size,
             confidence: signal.confidence,
             signalDirection: signal.direction,
           },
         },
       );
 
-      await this.executeExit(pos, exitPx, decision.reason, {
-        sellSize,
+      await this.executeExit(pos, exitPx, "signal_flip", {
+        sellSize: pos.size,
         signalMeta: {
           confidence: signal.confidence,
           direction: signal.direction,
-          detail: decision.detail,
+          detail: `flip to ${signal.direction} @ conf ${signal.confidence}`,
         },
       });
     }
