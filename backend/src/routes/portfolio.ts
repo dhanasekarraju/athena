@@ -196,7 +196,35 @@ export default async function portfolioRoutes(app: FastifyInstance) {
         ? "Paper mode — stats are paper-only"
         : "Live mode — stats are live-only (paper history cleared on switch)",
       openPositions: enrichedOpen,
-      recentClosed: botClosed.slice(0, 20),
+      // App renders `size` and a `exit · reason · pnl` line as-is. Closed rows
+      // have size decremented to 0, so restore the original lots and fold the
+      // IST open→close times into the reason text (no APK change needed).
+      recentClosed: botClosed.slice(0, 20).map((p) => {
+        const snap = p.signalSnapshot as { originalSize?: number } | null;
+        const fmt = (d: Date | null) =>
+          d
+            ? new Intl.DateTimeFormat("en-IN", {
+                timeZone: "Asia/Kolkata",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+                day: "2-digit",
+                month: "short",
+              }).format(d)
+            : "?";
+        const holdMin =
+          p.closedAt && p.openedAt
+            ? Math.round((p.closedAt.getTime() - p.openedAt.getTime()) / 60000)
+            : null;
+        return {
+          ...p,
+          size: snap?.originalSize ?? p.size,
+          exitReason: [
+            p.exitReason ?? "closed",
+            `${fmt(p.openedAt)}→${fmt(p.closedAt)}${holdMin != null ? ` (${holdMin}m)` : ""}`,
+          ].join(" · "),
+        };
+      }),
       manual: {
         totalTrades: manualTotal,
         wins: manualWins,
