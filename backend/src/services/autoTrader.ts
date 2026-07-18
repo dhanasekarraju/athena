@@ -6,6 +6,7 @@ import { DeltaClient } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
 import { evaluateEntryGuards, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
+import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
 import { getTrendVerdict, verdictAllows } from "./trendJudge.js";
 import { buildEntryLevels, decideLongExit } from "./exitLogic.js";
 
@@ -103,6 +104,9 @@ export class AutoTrader {
       details: opts.details,
     });
     if (this.activity.length > ACTIVITY_LIMIT) this.activity.length = ACTIVITY_LIMIT;
+
+    // Mirror into the News tab so the app shows what the bot is doing.
+    void publishBotFeed(this.prisma, this.log, botActivityToFeedItem(level, message));
   }
 
   async status() {
@@ -348,6 +352,16 @@ export class AutoTrader {
     // Gemini trend judge: entry must agree with the higher-level trend; chop blocks.
     // Fails open if the judge is unavailable.
     const verdict = await getTrendVerdict(sym, this.log);
+    if (verdict.source === "gemini") {
+      void publishBotFeed(this.prisma, this.log, {
+        key: `trend:${sym}:${verdict.trend}`,
+        minIntervalMs: env.TREND_JUDGE_TTL_MS,
+        title: `Gemini on ${sym}: ${verdict.trend.toUpperCase()} (${verdict.strength}) — ${verdict.reason}`,
+        source: "Athena • Gemini",
+        sentiment: verdict.trend === "up" ? "Bullish" : verdict.trend === "down" ? "Bearish" : "Neutral",
+        score: verdict.strength,
+      });
+    }
     const trendGate = verdictAllows(signal.direction as "BUY_CALL" | "BUY_PUT", verdict);
     if (!trendGate.ok) {
       this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${trendGate.why}`, {

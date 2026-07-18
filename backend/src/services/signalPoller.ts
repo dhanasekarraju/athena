@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { aiEngineClient } from "./aiEngineClient.js";
 import { getAutoTrader } from "./autoTrader.js";
 import { getBotConfig } from "./botConfig.js";
+import { publishBotFeed } from "./botFeed.js";
 import { env } from "../utils/env.js";
 
 interface AiOption {
@@ -163,6 +164,22 @@ export class SignalPoller {
             }
           : { source: "signal_poller" },
       },
+    });
+
+    // Pulse to the News tab (30m per symbol/timeframe) so the app shows what
+    // the AI currently thinks even when no trade fires (e.g. endless HOLDs).
+    void publishBotFeed(this.prisma, this.log, {
+      key: `pulse:${signal.symbol}:${signal.timeframe}`,
+      minIntervalMs: 30 * 60 * 1000,
+      title: `${signal.symbol} ${signal.timeframe}: ${signal.direction} (conf ${signal.confidence}) — ${signal.reasons?.[0] ?? "no dominant factor"}`,
+      source: "Athena • Signal",
+      sentiment:
+        signal.direction === "BUY_CALL"
+          ? "Bullish"
+          : signal.direction === "BUY_PUT"
+            ? "Bearish"
+            : "Neutral",
+      score: signal.confidence,
     });
 
     await trader.onSignal({
