@@ -99,7 +99,10 @@ export class DeltaClient {
     });
     const json = (await res.json()) as { success?: boolean; result?: T; error?: { message?: string } };
     if (!res.ok || json.success === false) {
-      throw new Error(json.error?.message || `Delta API ${method} ${path} failed (${res.status})`);
+      const detail = json.error ? `: ${JSON.stringify(json.error).slice(0, 300)}` : "";
+      throw new Error(
+        json.error?.message || `Delta API ${method} ${path} failed (${res.status})${detail}`,
+      );
     }
     return json.result as T;
   }

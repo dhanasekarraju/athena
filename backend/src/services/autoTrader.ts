@@ -405,7 +405,17 @@ export class AutoTrader {
     const costPerContractInr = costPerContractUsd * usdInr;
     if (costPerContractInr <= 0) return;
 
-    const budget = Math.min(cfg.maxOrderInr, room);
+    let budget = Math.min(cfg.maxOrderInr, room);
+    // Cap by what the wallet can actually pay — otherwise Delta rejects the
+    // order with a 400 and we retry forever on every poll.
+    if (!paperMode) {
+      try {
+        const usdAvail = await this.client.getUsdAvailable();
+        if (usdAvail != null) budget = Math.min(budget, usdAvail * usdInr * 0.95);
+      } catch (err) {
+        this.log.warn({ err }, "Could not read wallet balance before sizing");
+      }
+    }
     const size = Math.floor(budget / costPerContractInr);
     if (size < 1) {
       this.pushActivity(
