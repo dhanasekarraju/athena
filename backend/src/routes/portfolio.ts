@@ -197,32 +197,65 @@ export default async function portfolioRoutes(app: FastifyInstance) {
         : "Live mode — stats are live-only (paper history cleared on switch)",
       openPositions: enrichedOpen,
       // App renders `size` and a `exit · reason · pnl` line as-is. Closed rows
-      // have size decremented to 0, so restore the original lots and fold the
-      // IST open→close times into the reason text (no APK change needed).
+      // have size decremented to 0, so restore the original lots, shorten the
+      // product name and fold compact IST times into the reason text
+      // (display-only; no APK change needed).
       recentClosed: botClosed.slice(0, 20).map((p) => {
         const snap = p.signalSnapshot as { originalSize?: number } | null;
-        const fmt = (d: Date | null) =>
+
+        const time = (d: Date | null) =>
           d
             ? new Intl.DateTimeFormat("en-IN", {
                 timeZone: "Asia/Kolkata",
                 hour: "2-digit",
                 minute: "2-digit",
                 hour12: false,
+              }).format(d)
+            : "?";
+        const day = (d: Date | null) =>
+          d
+            ? new Intl.DateTimeFormat("en-IN", {
+                timeZone: "Asia/Kolkata",
                 day: "2-digit",
                 month: "short",
               }).format(d)
             : "?";
+
+        const sameDay = p.openedAt && p.closedAt && day(p.openedAt) === day(p.closedAt);
         const holdMin =
           p.closedAt && p.openedAt
             ? Math.round((p.closedAt.getTime() - p.openedAt.getTime()) / 60000)
             : null;
+        const hold =
+          holdMin == null ? "" : holdMin < 60 ? `${holdMin}m` : `${Math.floor(holdMin / 60)}h${holdMin % 60}m`;
+
+        const REASON_SHORT: Record<string, string> = {
+          stop_loss: "SL hit",
+          take_profit_1: "TP hit",
+          trail_stop: "Trail",
+          protect_breakeven: "Trail(BE)",
+          signal_flip: "AI flip",
+          external_close: "Ext close",
+          manual_close: "Manual",
+        };
+        const reason = REASON_SHORT[p.exitReason ?? ""] ?? p.exitReason ?? "closed";
+
+        const when = sameDay
+          ? `${day(p.closedAt)} ${time(p.openedAt)}→${time(p.closedAt)}`
+          : `${day(p.openedAt)} ${time(p.openedAt)}→${day(p.closedAt)} ${time(p.closedAt)}`;
+
+        // "C-ETH-1850-240726" → "ETH 1850C 24Jul"
+        const m = /^([CP])-([A-Z]+)-(\d+(?:\.\d+)?)-(\d{2})(\d{2})(\d{2})$/.exec(p.productSymbol);
+        const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const prettyProduct = m
+          ? `${m[2]} ${m[3]}${m[1]} ${Number(m[4])}${MONTHS[Number(m[5])] ?? m[5]}`
+          : p.productSymbol;
+
         return {
           ...p,
+          productSymbol: prettyProduct,
           size: snap?.originalSize ?? p.size,
-          exitReason: [
-            p.exitReason ?? "closed",
-            `${fmt(p.openedAt)}→${fmt(p.closedAt)}${holdMin != null ? ` (${holdMin}m)` : ""}`,
-          ].join(" · "),
+          exitReason: `${reason} · ${when} (${hold})`,
         };
       }),
       manual: {
