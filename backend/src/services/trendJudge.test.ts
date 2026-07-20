@@ -61,23 +61,46 @@ describe("verdictAllows", () => {
     expect(verdictAllows("BUY_PUT", verdict("chop", "unavailable")).ok).toBe(true);
   });
 
-  it("for flip-after-SL requires all three frames", () => {
-    const weak: TrendVerdict = {
-      trend: "down",
-      strength: 65,
-      reason: "1m+5m down",
+  it("allows when 1m+5m agree even without 15m", () => {
+    const v: TrendVerdict = {
+      trend: "up",
+      strength: 70,
+      reason: "1m+5m up, 15m flat",
       source: "gemini",
       frames: ["1m", "5m"],
     };
-    expect(verdictAllows("BUY_PUT", weak, { requireAllFrames: true }).ok).toBe(false);
+    expect(verdictAllows("BUY_CALL", v).ok).toBe(true);
+  });
 
-    const strong: TrendVerdict = {
-      ...weak,
-      strength: 80,
-      frames: ["1m", "5m", "15m"],
-      reason: "1m+5m+15m down",
+  it("blocks when only 15m agrees (15m lags)", () => {
+    const v: TrendVerdict = {
+      trend: "up",
+      strength: 60,
+      reason: "15m up only",
+      source: "gemini",
+      frames: ["15m"],
     };
-    expect(verdictAllows("BUY_PUT", strong, { requireAllFrames: true }).ok).toBe(true);
+    expect(verdictAllows("BUY_CALL", v).ok).toBe(false);
+  });
+
+  it("for flip-after-SL requires 1m+5m core momentum", () => {
+    const weak: TrendVerdict = {
+      trend: "down",
+      strength: 55,
+      reason: "5m down only",
+      source: "gemini",
+      frames: ["5m"],
+    };
+    expect(verdictAllows("BUY_PUT", weak, { requireCoreFrames: true }).ok).toBe(false);
+
+    const core: TrendVerdict = {
+      trend: "down",
+      strength: 70,
+      frames: ["1m", "5m"],
+      reason: "1m+5m down, 15m flat",
+      source: "gemini",
+    };
+    expect(verdictAllows("BUY_PUT", core, { requireCoreFrames: true }).ok).toBe(true);
   });
 
   it("parses frames from Gemini JSON", () => {

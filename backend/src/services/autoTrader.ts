@@ -379,7 +379,7 @@ export class AutoTrader {
     }
 
     // Gemini trend judge: entry must agree with the higher-level trend; chop blocks.
-    // After an opposite-side stop-loss, require all 3 frames aligned (flip only on clear reverse).
+    // After an opposite-side stop-loss, require 1m+5m aligned (flip on clear reverse).
     // Fails open if the judge is unavailable.
     const oppositeDir = signal.direction === "BUY_CALL" ? "BUY_PUT" : "BUY_CALL";
     const recentOppositeStop = await this.prisma.botPosition.findFirst({
@@ -408,7 +408,7 @@ export class AutoTrader {
       });
     }
     const trendGate = verdictAllows(signal.direction as "BUY_CALL" | "BUY_PUT", verdict, {
-      requireAllFrames: flipAfterSl,
+      requireCoreFrames: flipAfterSl,
     });
     if (!trendGate.ok) {
       this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${trendGate.why}`, {
@@ -431,7 +431,7 @@ export class AutoTrader {
     if (flipAfterSl) {
       this.pushActivity(
         "info",
-        `${sym} ${signal.direction} flip after ${oppositeDir} SL — all frames ok`,
+        `${sym} ${signal.direction} flip after ${oppositeDir} SL — 1m+5m ok`,
         {
           symbol: sym,
           details: {

@@ -72,11 +72,17 @@ function normalizeFrames(raw: unknown): string[] {
   return out;
 }
 
+/** 1m+5m = actionable momentum; 15m lags and must not block entries. */
+export function hasCoreMomentum(frames: string[] | undefined): boolean {
+  const f = frames ?? [];
+  return f.includes("1m") && f.includes("5m");
+}
+
 /** Does the verdict allow entering in this direction? Fail-open on "unavailable". */
 export function verdictAllows(
   direction: "BUY_CALL" | "BUY_PUT",
   verdict: TrendVerdict,
-  opts?: { requireAllFrames?: boolean },
+  opts?: { requireCoreFrames?: boolean },
 ): { ok: boolean; why: string } {
   if (verdict.source === "unavailable") {
     return { ok: true, why: "trend judge unavailable — allowing" };
@@ -91,19 +97,22 @@ export function verdictAllows(
       why: `trend is ${verdict.trend} (${verdict.strength}), signal wants ${wanted} — ${verdict.reason}`,
     };
   }
-  // After an opposite-side stop-loss: only flip if 1m+5m+15m all agree.
-  if (opts?.requireAllFrames) {
-    const frames = verdict.frames ?? [];
-    const allThree =
-      frames.includes("1m") && frames.includes("5m") && frames.includes("15m");
-    // Fallback when older cached replies lack frames: high strength ≈ unanimous.
-    if (!allThree && !(frames.length === 0 && verdict.strength >= 75)) {
-      return {
-        ok: false,
-        why: `flip after SL needs all frames aligned (got ${frames.join("+") || "none"}, str ${verdict.strength}) — ${verdict.reason}`,
-      };
+
+  const frames = verdict.frames ?? [];
+  const core = hasCoreMomentum(frames);
+  const mustCheckCore = opts?.requireCoreFrames || frames.length > 0;
+
+  if (mustCheckCore && !core) {
+    // Cached replies without frames: high strength ≈ model saw 1m+5m agree.
+    if (frames.length === 0 && verdict.strength >= 65) {
+      return { ok: true, why: `trend ${verdict.trend} (${verdict.strength}) agrees` };
     }
+    return {
+      ok: false,
+      why: `needs 1m+5m momentum (15m lags; got ${frames.join("+") || "none"}) — ${verdict.reason}`,
+    };
   }
+
   return { ok: true, why: `trend ${verdict.trend} (${verdict.strength}) agrees` };
 }
 
@@ -145,11 +154,12 @@ async function askGemini(symbol: string, log: FastifyBaseLogger): Promise<TrendV
     `Classify the current tradeable trend:`,
     `- "up": clear short-term upward momentum a call buyer could ride within the hour`,
     `- "down": clear short-term downward momentum a put buyer could ride within the hour`,
-    `- "chop": sideways / whipsaw conditions where option buyers bleed premium`,
-    `HARD RULE: answer "up" or "down" only if AT LEAST 2 of the 3 timeframes (1m, 5m, 15m) clearly show momentum in that same direction (any pair: 1m+5m, 1m+15m, or 5m+15m). If fewer than 2 agree, answer "chop".`,
-    `In "frames", list ONLY the timeframes that clearly agree with your trend (subset of "1m","5m","15m"). Empty array for chop.`,
-    `In the reason, name which timeframes agree (e.g. "1m+5m up, 15m flat").`,
-    `Be conservative: when in doubt, answer "chop".`,
+    `- "chop": sideways / whipsaw — 1m and 5m conflict, or both flat/ranging`,
+    `HARD RULE (options are fast — 15m LAGS): answer "up" or "down" when 1m AND 5m clearly agree on direction. A flat or opposite 15m must NOT downgrade to chop — by the time 15m confirms, momentum is often gone.`,
+    `Answer "chop" only when 1m and 5m disagree OR both show no directional momentum.`,
+    `In "frames", list timeframes that agree with your trend. For up/down you MUST include both "1m" and "5m". Include "15m" only if it also agrees; omit it when flat/opposite.`,
+    `In the reason, say e.g. "1m+5m up, 15m flat".`,
+    `Be conservative on chop (conflicting 1m vs 5m), but do NOT wait for 15m to call a trend.`,
     `Respond with ONLY this JSON, no markdown: {"trend":"up"|"down"|"chop","strength":<0-100 integer conviction>,"frames":["1m","5m"],"reason":"<max 15 words>"}`,
   ].join("\n");
 
