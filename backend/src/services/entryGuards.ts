@@ -16,6 +16,8 @@ export interface EntryGuardInput {
   lastStopLossAt?: string | null;
   /** ISO timestamp of last close in the same direction (any exit reason) */
   lastSameDirectionCloseAt?: string | null;
+  /** Exit reason for that close — loss exits wait longer (options move fast). */
+  lastSameDirectionExitReason?: string | null;
   /** Ms since this direction first appeared at entry-grade confidence */
   directionAgeMs?: number | null;
   /** Count of AI reason strings on the live signal */
@@ -43,8 +45,20 @@ export const STOP_LOSS_COOLDOWN_MS = 25 * 60 * 1000;
 /** Do not enter a move that has already been running this long at min confidence. */
 export const MAX_DIRECTION_AGE_MS = 90 * 60 * 1000;
 
-/** After closing a CALL/PUT, wait before opening the same direction again. */
-export const SAME_DIRECTION_COOLDOWN_MS = 60 * 60 * 1000;
+/** After a win/trail/BE on this direction — brief pause, don't double-tap. */
+export const SAME_DIRECTION_COOLDOWN_WIN_MS = 20 * 60 * 1000;
+
+/** After stop_loss on this direction — longer pause before same-side re-entry. */
+export const SAME_DIRECTION_COOLDOWN_LOSS_MS = 45 * 60 * 1000;
+
+/** @deprecated use sameDirectionCooldownMs() */
+export const SAME_DIRECTION_COOLDOWN_MS = SAME_DIRECTION_COOLDOWN_LOSS_MS;
+
+export function sameDirectionCooldownMs(exitReason?: string | null): number {
+  return exitReason === "stop_loss"
+    ? SAME_DIRECTION_COOLDOWN_LOSS_MS
+    : SAME_DIRECTION_COOLDOWN_WIN_MS;
+}
 
 /** Extended moves need more than MACD+EMA — require this many AI reasons. */
 export const TIRED_MOVE_AGE_MS = 30 * 60 * 1000;
@@ -113,15 +127,18 @@ export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
 
   if (input.lastSameDirectionCloseAt) {
     const last = Date.parse(input.lastSameDirectionCloseAt);
-    if (Number.isFinite(last) && now - last < SAME_DIRECTION_COOLDOWN_MS) {
-      const remainMin = Math.ceil((SAME_DIRECTION_COOLDOWN_MS - (now - last)) / 60000);
+    const cooldownMs = sameDirectionCooldownMs(input.lastSameDirectionExitReason);
+    if (Number.isFinite(last) && now - last < cooldownMs) {
+      const remainMin = Math.ceil((cooldownMs - (now - last)) / 60000);
+      const kind = input.lastSameDirectionExitReason === "stop_loss" ? "after SL" : "after close";
       return {
         ok: false,
-        reason: `same-direction cooldown (${remainMin}m left)`,
+        reason: `same-direction cooldown (${remainMin}m left, ${kind})`,
         requiredConfidence: required,
         details: {
           lastSameDirectionCloseAt: input.lastSameDirectionCloseAt,
-          cooldownMs: SAME_DIRECTION_COOLDOWN_MS,
+          exitReason: input.lastSameDirectionExitReason,
+          cooldownMs,
           remainMin,
         },
       };

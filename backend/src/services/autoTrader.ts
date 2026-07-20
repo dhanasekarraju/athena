@@ -5,7 +5,7 @@ import { env } from "../utils/env.js";
 import { DeltaClient } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
-import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_MS, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
+import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_LOSS_MS, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
 import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
 import { getTrendVerdict, verdictAllows } from "./trendJudge.js";
@@ -218,10 +218,10 @@ export class AutoTrader {
         direction: signal.direction,
         status: "CLOSED",
         paper: paperMode,
-        closedAt: { gte: new Date(nowMs - SAME_DIRECTION_COOLDOWN_MS) },
+        closedAt: { gte: new Date(nowMs - SAME_DIRECTION_COOLDOWN_LOSS_MS) },
       },
       orderBy: { closedAt: "desc" },
-      select: { closedAt: true },
+      select: { closedAt: true, exitReason: true },
     });
     const directionAgeMs = await getDirectionAgeMs(
       this.prisma,
@@ -241,6 +241,7 @@ export class AutoTrader {
       skipHighRisk: cfg.skipHighRisk,
       lastStopLossAt: recentStop?.closedAt?.toISOString() ?? null,
       lastSameDirectionCloseAt: recentSameDir?.closedAt?.toISOString() ?? null,
+      lastSameDirectionExitReason: recentSameDir?.exitReason ?? null,
       directionAgeMs,
       reasonCount: signal.reasons?.length ?? 0,
       nowMs,

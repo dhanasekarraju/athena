@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_DIRECTION_AGE_MS,
-  SAME_DIRECTION_COOLDOWN_MS,
+  SAME_DIRECTION_COOLDOWN_LOSS_MS,
+  SAME_DIRECTION_COOLDOWN_WIN_MS,
   STOP_LOSS_COOLDOWN_MS,
   TIRED_MOVE_AGE_MS,
   TIRED_MOVE_MIN_REASONS,
@@ -85,16 +86,52 @@ describe("evaluateEntryGuards", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("blocks same-direction re-entry within 60m", () => {
+  it("blocks same-direction re-entry within 20m after a win", () => {
     const now = Date.now();
     const r = evaluateEntryGuards({
       ...base,
       direction: "BUY_PUT",
-      lastSameDirectionCloseAt: new Date(now - 20 * 60 * 1000).toISOString(),
+      lastSameDirectionCloseAt: new Date(now - 10 * 60 * 1000).toISOString(),
+      lastSameDirectionExitReason: "trail_stop",
       nowMs: now,
     });
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/same-direction cooldown/i);
+  });
+
+  it("blocks same-direction re-entry within 45m after stop_loss", () => {
+    const now = Date.now();
+    const r = evaluateEntryGuards({
+      ...base,
+      direction: "BUY_PUT",
+      lastSameDirectionCloseAt: new Date(now - 30 * 60 * 1000).toISOString(),
+      lastSameDirectionExitReason: "stop_loss",
+      nowMs: now,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/same-direction cooldown/i);
+  });
+
+  it("allows same-direction re-entry 25m after a win", () => {
+    const now = Date.now();
+    const r = evaluateEntryGuards({
+      ...base,
+      lastSameDirectionCloseAt: new Date(now - SAME_DIRECTION_COOLDOWN_WIN_MS - 1000).toISOString(),
+      lastSameDirectionExitReason: "trail_stop",
+      nowMs: now,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("allows same-direction re-entry after loss cooldown expires", () => {
+    const now = Date.now();
+    const r = evaluateEntryGuards({
+      ...base,
+      lastSameDirectionCloseAt: new Date(now - SAME_DIRECTION_COOLDOWN_LOSS_MS - 1000).toISOString(),
+      lastSameDirectionExitReason: "stop_loss",
+      nowMs: now,
+    });
+    expect(r.ok).toBe(true);
   });
 
   it("blocks when direction has been active too long", () => {
