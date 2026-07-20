@@ -65,15 +65,28 @@ describe("evaluateEntryGuards", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("enforces stop-loss cooldown", () => {
+  it("enforces stop-loss cooldown on same-direction re-entry", () => {
     const now = Date.now();
     const r = evaluateEntryGuards({
       ...base,
+      direction: "BUY_CALL",
       lastStopLossAt: new Date(now - 10 * 60 * 1000).toISOString(),
       nowMs: now,
     });
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/cooldown/i);
+  });
+
+  it("allows opposite direction when only same-dir SL cooldown would apply (caller omits lastStopLossAt)", () => {
+    // autoTrader only passes lastStopLossAt for matching direction — PUT after CALL SL
+    // arrives with lastStopLossAt=null and should pass.
+    const r = evaluateEntryGuards({
+      ...base,
+      direction: "BUY_PUT",
+      lastStopLossAt: null,
+      confidence: 40,
+    });
+    expect(r.ok).toBe(true);
   });
 
   it("allows entry after cooldown expires", () => {

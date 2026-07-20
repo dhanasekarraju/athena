@@ -201,9 +201,12 @@ export class AutoTrader {
 
     const paperMode = cfg.paperTrading || !this.client.configured;
     const nowMs = Date.now();
+    // SL cooldown is same-direction only. CALL stop → PUT may enter immediately
+    // (flip is the thesis); same-side revenge is what we pause.
     const recentStop = await this.prisma.botPosition.findFirst({
       where: {
         underlying: sym,
+        direction: signal.direction,
         status: "CLOSED",
         exitReason: "stop_loss",
         paper: paperMode,
