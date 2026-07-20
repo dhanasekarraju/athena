@@ -14,6 +14,12 @@ export interface EntryGuardInput {
   skipHighRisk: boolean;
   /** ISO timestamp of last stop_loss close on this underlying, if any */
   lastStopLossAt?: string | null;
+  /** ISO timestamp of last close in the same direction (any exit reason) */
+  lastSameDirectionCloseAt?: string | null;
+  /** Ms since this direction first appeared at entry-grade confidence */
+  directionAgeMs?: number | null;
+  /** Count of AI reason strings on the live signal */
+  reasonCount?: number;
   nowMs?: number;
 }
 
@@ -33,6 +39,16 @@ export const BLOCKED_ENTRY_TIMEFRAMES = new Set(["1m", "1min", "1"]);
  * 25m with minConfidence ≥40: enough to break a losing streak, not half a session idle.
  */
 export const STOP_LOSS_COOLDOWN_MS = 25 * 60 * 1000;
+
+/** Do not enter a move that has already been running this long at min confidence. */
+export const MAX_DIRECTION_AGE_MS = 90 * 60 * 1000;
+
+/** After closing a CALL/PUT, wait before opening the same direction again. */
+export const SAME_DIRECTION_COOLDOWN_MS = 60 * 60 * 1000;
+
+/** Extended moves need more than MACD+EMA — require this many AI reasons. */
+export const TIRED_MOVE_AGE_MS = 30 * 60 * 1000;
+export const TIRED_MOVE_MIN_REASONS = 3;
 
 export function requiredConfidenceForSymbol(_symbol: string, minConfidence: number): number {
   return minConfidence;
@@ -93,6 +109,57 @@ export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
         },
       };
     }
+  }
+
+  if (input.lastSameDirectionCloseAt) {
+    const last = Date.parse(input.lastSameDirectionCloseAt);
+    if (Number.isFinite(last) && now - last < SAME_DIRECTION_COOLDOWN_MS) {
+      const remainMin = Math.ceil((SAME_DIRECTION_COOLDOWN_MS - (now - last)) / 60000);
+      return {
+        ok: false,
+        reason: `same-direction cooldown (${remainMin}m left)`,
+        requiredConfidence: required,
+        details: {
+          lastSameDirectionCloseAt: input.lastSameDirectionCloseAt,
+          cooldownMs: SAME_DIRECTION_COOLDOWN_MS,
+          remainMin,
+        },
+      };
+    }
+  }
+
+  if (input.directionAgeMs != null && input.directionAgeMs > MAX_DIRECTION_AGE_MS) {
+    const ageMin = Math.round(input.directionAgeMs / 60000);
+    return {
+      ok: false,
+      reason: `move too extended (${ageMin}m active, max ${MAX_DIRECTION_AGE_MS / 60000}m)`,
+      requiredConfidence: required,
+      details: {
+        directionAgeMs: input.directionAgeMs,
+        maxDirectionAgeMs: MAX_DIRECTION_AGE_MS,
+        ageMin,
+      },
+    };
+  }
+
+  const reasons = input.reasonCount ?? 0;
+  if (
+    input.directionAgeMs != null &&
+    input.directionAgeMs > TIRED_MOVE_AGE_MS &&
+    reasons < TIRED_MOVE_MIN_REASONS
+  ) {
+    const ageMin = Math.round(input.directionAgeMs / 60000);
+    return {
+      ok: false,
+      reason: `weak signal on tired move (${reasons} reasons, ${ageMin}m active)`,
+      requiredConfidence: required,
+      details: {
+        directionAgeMs: input.directionAgeMs,
+        reasonCount: reasons,
+        minReasons: TIRED_MOVE_MIN_REASONS,
+        ageMin,
+      },
+    };
   }
 
   return { ok: true, requiredConfidence: required };

@@ -5,7 +5,8 @@ import { env } from "../utils/env.js";
 import { DeltaClient } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
-import { evaluateEntryGuards, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
+import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_MS, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
+import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
 import { getTrendVerdict, verdictAllows } from "./trendJudge.js";
 import { buildEntryLevels, decideLongExit } from "./exitLogic.js";
@@ -52,6 +53,7 @@ export interface AutonSignal {
   premium_target_1?: number | null;
   premium_target_2?: number | null;
   premium_stop_loss?: number | null;
+  reasons?: string[];
 }
 
 export type BotActivityLevel = "info" | "skip" | "trade" | "exit" | "error";
@@ -198,17 +200,36 @@ export class AutoTrader {
     }
 
     const paperMode = cfg.paperTrading || !this.client.configured;
+    const nowMs = Date.now();
     const recentStop = await this.prisma.botPosition.findFirst({
       where: {
         underlying: sym,
         status: "CLOSED",
         exitReason: "stop_loss",
         paper: paperMode,
-        closedAt: { gte: new Date(Date.now() - STOP_LOSS_COOLDOWN_MS) },
+        closedAt: { gte: new Date(nowMs - STOP_LOSS_COOLDOWN_MS) },
       },
       orderBy: { closedAt: "desc" },
       select: { closedAt: true },
     });
+    const recentSameDir = await this.prisma.botPosition.findFirst({
+      where: {
+        underlying: sym,
+        direction: signal.direction,
+        status: "CLOSED",
+        paper: paperMode,
+        closedAt: { gte: new Date(nowMs - SAME_DIRECTION_COOLDOWN_MS) },
+      },
+      orderBy: { closedAt: "desc" },
+      select: { closedAt: true },
+    });
+    const directionAgeMs = await getDirectionAgeMs(
+      this.prisma,
+      sym,
+      signal.direction,
+      cfg.minConfidence,
+      nowMs,
+    );
 
     const guard = evaluateEntryGuards({
       symbol: sym,
@@ -219,6 +240,10 @@ export class AutoTrader {
       minConfidence: cfg.minConfidence,
       skipHighRisk: cfg.skipHighRisk,
       lastStopLossAt: recentStop?.closedAt?.toISOString() ?? null,
+      lastSameDirectionCloseAt: recentSameDir?.closedAt?.toISOString() ?? null,
+      directionAgeMs,
+      reasonCount: signal.reasons?.length ?? 0,
+      nowMs,
     });
     if (!guard.ok) {
       this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${guard.reason}`, {

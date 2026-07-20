@@ -117,6 +117,7 @@ export default async function signalRoutes(app: FastifyInstance) {
         premium_target_1: premium?.target_1 ?? null,
         premium_target_2: premium?.target_2 ?? null,
         premium_stop_loss: premium?.stop_loss ?? null,
+        reasons: signal.reasons,
       });
 
       return reply.send(signal);
