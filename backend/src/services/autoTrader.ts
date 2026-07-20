@@ -379,7 +379,23 @@ export class AutoTrader {
     }
 
     // Gemini trend judge: entry must agree with the higher-level trend; chop blocks.
+    // After an opposite-side stop-loss, require all 3 frames aligned (flip only on clear reverse).
     // Fails open if the judge is unavailable.
+    const oppositeDir = signal.direction === "BUY_CALL" ? "BUY_PUT" : "BUY_CALL";
+    const recentOppositeStop = await this.prisma.botPosition.findFirst({
+      where: {
+        underlying: sym,
+        direction: oppositeDir,
+        status: "CLOSED",
+        exitReason: "stop_loss",
+        paper: paperMode,
+        closedAt: { gte: new Date(Date.now() - 90 * 60 * 1000) },
+      },
+      orderBy: { closedAt: "desc" },
+      select: { closedAt: true, direction: true },
+    });
+    const flipAfterSl = recentOppositeStop != null;
+
     const verdict = await getTrendVerdict(sym, this.log);
     if (verdict.source === "gemini") {
       void publishBotFeed(this.prisma, this.log, {
@@ -391,7 +407,9 @@ export class AutoTrader {
         score: verdict.strength,
       });
     }
-    const trendGate = verdictAllows(signal.direction as "BUY_CALL" | "BUY_PUT", verdict);
+    const trendGate = verdictAllows(signal.direction as "BUY_CALL" | "BUY_PUT", verdict, {
+      requireAllFrames: flipAfterSl,
+    });
     if (!trendGate.ok) {
       this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${trendGate.why}`, {
         symbol: sym,
@@ -399,14 +417,30 @@ export class AutoTrader {
           trend: verdict.trend,
           strength: verdict.strength,
           reason: verdict.reason,
+          frames: verdict.frames,
+          flipAfterSl,
           confidence: signal.confidence,
         },
       });
       this.log.info(
-        { symbol: sym, direction: signal.direction, verdict },
+        { symbol: sym, direction: signal.direction, verdict, flipAfterSl },
         "Skip auto entry: trend judge",
       );
       return;
+    }
+    if (flipAfterSl) {
+      this.pushActivity(
+        "info",
+        `${sym} ${signal.direction} flip after ${oppositeDir} SL — all frames ok`,
+        {
+          symbol: sym,
+          details: {
+            oppositeStopAt: recentOppositeStop.closedAt?.toISOString(),
+            frames: verdict.frames,
+            strength: verdict.strength,
+          },
+        },
+      );
     }
 
     const optionType = signal.direction === "BUY_CALL" ? "call" : "put";

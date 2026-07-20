@@ -20,6 +20,8 @@ export interface TrendVerdict {
   strength: number;
   reason: string;
   source: "gemini" | "unavailable";
+  /** Timeframes that agree with trend (e.g. ["1m","5m","15m"]). Empty when unknown. */
+  frames?: string[];
 }
 
 const BINANCE_KLINES = "https://api.binance.com/api/v3/klines";
@@ -37,25 +39,44 @@ export function parseVerdict(text: string): TrendVerdict | null {
   try {
     // Models sometimes wrap JSON in markdown fences despite instructions.
     const cleaned = text.replace(/```(?:json)?/g, "").trim();
-    const obj = JSON.parse(cleaned) as { trend?: string; strength?: number; reason?: string };
+    const obj = JSON.parse(cleaned) as {
+      trend?: string;
+      strength?: number;
+      reason?: string;
+      frames?: unknown;
+    };
     const trend = String(obj.trend ?? "").toLowerCase();
     if (trend !== "up" && trend !== "down" && trend !== "chop") return null;
     const strength = Math.max(0, Math.min(100, Number(obj.strength ?? 0)));
+    const frames = normalizeFrames(obj.frames);
     return {
       trend,
       strength: Number.isFinite(strength) ? strength : 0,
       reason: String(obj.reason ?? "").slice(0, 200),
       source: "gemini",
+      frames,
     };
   } catch {
     return null;
   }
 }
 
+function normalizeFrames(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const allowed = new Set(["1m", "5m", "15m"]);
+  const out: string[] = [];
+  for (const x of raw) {
+    const f = String(x).toLowerCase().trim();
+    if (allowed.has(f) && !out.includes(f)) out.push(f);
+  }
+  return out;
+}
+
 /** Does the verdict allow entering in this direction? Fail-open on "unavailable". */
 export function verdictAllows(
   direction: "BUY_CALL" | "BUY_PUT",
   verdict: TrendVerdict,
+  opts?: { requireAllFrames?: boolean },
 ): { ok: boolean; why: string } {
   if (verdict.source === "unavailable") {
     return { ok: true, why: "trend judge unavailable — allowing" };
@@ -69,6 +90,19 @@ export function verdictAllows(
       ok: false,
       why: `trend is ${verdict.trend} (${verdict.strength}), signal wants ${wanted} — ${verdict.reason}`,
     };
+  }
+  // After an opposite-side stop-loss: only flip if 1m+5m+15m all agree.
+  if (opts?.requireAllFrames) {
+    const frames = verdict.frames ?? [];
+    const allThree =
+      frames.includes("1m") && frames.includes("5m") && frames.includes("15m");
+    // Fallback when older cached replies lack frames: high strength ≈ unanimous.
+    if (!allThree && !(frames.length === 0 && verdict.strength >= 75)) {
+      return {
+        ok: false,
+        why: `flip after SL needs all frames aligned (got ${frames.join("+") || "none"}, str ${verdict.strength}) — ${verdict.reason}`,
+      };
+    }
   }
   return { ok: true, why: `trend ${verdict.trend} (${verdict.strength}) agrees` };
 }
@@ -113,9 +147,10 @@ async function askGemini(symbol: string, log: FastifyBaseLogger): Promise<TrendV
     `- "down": clear short-term downward momentum a put buyer could ride within the hour`,
     `- "chop": sideways / whipsaw conditions where option buyers bleed premium`,
     `HARD RULE: answer "up" or "down" only if AT LEAST 2 of the 3 timeframes (1m, 5m, 15m) clearly show momentum in that same direction (any pair: 1m+5m, 1m+15m, or 5m+15m). If fewer than 2 agree, answer "chop".`,
+    `In "frames", list ONLY the timeframes that clearly agree with your trend (subset of "1m","5m","15m"). Empty array for chop.`,
     `In the reason, name which timeframes agree (e.g. "1m+5m up, 15m flat").`,
     `Be conservative: when in doubt, answer "chop".`,
-    `Respond with ONLY this JSON, no markdown: {"trend":"up"|"down"|"chop","strength":<0-100 integer conviction>,"reason":"<max 15 words>"}`,
+    `Respond with ONLY this JSON, no markdown: {"trend":"up"|"down"|"chop","strength":<0-100 integer conviction>,"frames":["1m","5m"],"reason":"<max 15 words>"}`,
   ].join("\n");
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.TREND_JUDGE_MODEL}:generateContent`;

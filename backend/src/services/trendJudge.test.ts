@@ -60,4 +60,30 @@ describe("verdictAllows", () => {
     expect(verdictAllows("BUY_CALL", verdict("chop", "unavailable")).ok).toBe(true);
     expect(verdictAllows("BUY_PUT", verdict("chop", "unavailable")).ok).toBe(true);
   });
+
+  it("for flip-after-SL requires all three frames", () => {
+    const weak: TrendVerdict = {
+      trend: "down",
+      strength: 65,
+      reason: "1m+5m down",
+      source: "gemini",
+      frames: ["1m", "5m"],
+    };
+    expect(verdictAllows("BUY_PUT", weak, { requireAllFrames: true }).ok).toBe(false);
+
+    const strong: TrendVerdict = {
+      ...weak,
+      strength: 80,
+      frames: ["1m", "5m", "15m"],
+      reason: "1m+5m+15m down",
+    };
+    expect(verdictAllows("BUY_PUT", strong, { requireAllFrames: true }).ok).toBe(true);
+  });
+
+  it("parses frames from Gemini JSON", () => {
+    const v = parseVerdict(
+      '{"trend":"down","strength":80,"frames":["1m","5m","15m"],"reason":"all down"}',
+    );
+    expect(v!.frames).toEqual(["1m", "5m", "15m"]);
+  });
 });
