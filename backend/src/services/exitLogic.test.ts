@@ -132,14 +132,35 @@ describe("decideLongExit", () => {
 describe("shouldTimeExit", () => {
   const opened = Date.now() - 91 * 60 * 1000;
 
-  it("forces exit after 90m when trail never armed", () => {
+  it("exits after 90m when at least +3% green", () => {
     const r = shouldTimeExit({
       openedAtMs: opened,
       peakExitPx: 105,
       entryPremium: 100,
+      exitPx: 104,
     });
     expect(r.exit).toBe(true);
     expect(r.limitMin).toBe(MAX_HOLD_MS / 60000);
+  });
+
+  it("does not exit after 90m when red", () => {
+    const r = shouldTimeExit({
+      openedAtMs: opened,
+      peakExitPx: 100,
+      entryPremium: 100,
+      exitPx: 95,
+    });
+    expect(r.exit).toBe(false);
+  });
+
+  it("does not exit after 90m when flat (+1%)", () => {
+    const r = shouldTimeExit({
+      openedAtMs: opened,
+      peakExitPx: 101,
+      entryPremium: 100,
+      exitPx: 101,
+    });
+    expect(r.exit).toBe(false);
   });
 
   it("allows up to 120m when trail was armed", () => {
@@ -147,25 +168,28 @@ describe("shouldTimeExit", () => {
       openedAtMs: opened,
       peakExitPx: 115,
       entryPremium: 100,
+      exitPx: 104,
     });
     expect(r.exit).toBe(false);
     expect(r.limitMin).toBe(MAX_HOLD_TRAIL_MS / 60000);
   });
 
-  it("exits trail-armed position after 120m", () => {
+  it("exits trail-armed position after 120m when green", () => {
     const r = shouldTimeExit({
       openedAtMs: Date.now() - 121 * 60 * 1000,
       peakExitPx: 115,
       entryPremium: 100,
+      exitPx: 105,
     });
     expect(r.exit).toBe(true);
   });
 
-  it("holds under 90m", () => {
+  it("holds under 90m even when green", () => {
     const r = shouldTimeExit({
       openedAtMs: Date.now() - 60 * 60 * 1000,
       peakExitPx: 100,
       entryPremium: 100,
+      exitPx: 110,
     });
     expect(r.exit).toBe(false);
   });

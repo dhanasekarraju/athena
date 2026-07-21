@@ -781,12 +781,14 @@ export class AutoTrader {
       openedAtMs: pos.openedAt.getTime(),
       peakExitPx: decision.peakExitPx,
       entryPremium: pos.entryPremium,
+      exitPx: decision.exitPx > 0 ? decision.exitPx : quotes.mark || quotes.bid,
     });
     if (timeGate.exit) {
       const exitPx = decision.exitPx > 0 ? decision.exitPx : quotes.mark || quotes.bid;
+      const greenPct = ((timeGate.greenPct ?? 0) * 100).toFixed(1);
       this.pushActivity(
         "exit",
-        `Time cap ${pos.productSymbol} after ${timeGate.holdMin}m (max ${timeGate.limitMin}m)`,
+        `Time cap ${pos.productSymbol} +${greenPct}% after ${timeGate.holdMin}m`,
         {
           symbol: pos.productSymbol,
           details: { holdMin: timeGate.holdMin, limitMin: timeGate.limitMin, exitPx },
