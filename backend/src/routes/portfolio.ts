@@ -234,6 +234,7 @@ export default async function portfolioRoutes(app: FastifyInstance) {
           take_profit_1: "TP hit",
           trail_stop: "Trail",
           protect_breakeven: "Trail(BE)",
+          time_stop: "Time cap",
           signal_flip: "AI flip",
           external_close: "Ext close",
           manual_close: "Manual",

@@ -7,6 +7,9 @@ import {
   longExitPrice,
   longSlProbe,
   longTpProbe,
+  MAX_HOLD_MS,
+  MAX_HOLD_TRAIL_MS,
+  shouldTimeExit,
 } from "./exitLogic.js";
 
 describe("exit quotes", () => {
@@ -123,6 +126,48 @@ describe("decideLongExit", () => {
       { ...base, stopLoss: 60, takeProfit1: 40 },
     );
     expect(d.reason).toBe("stop_loss");
+  });
+});
+
+describe("shouldTimeExit", () => {
+  const opened = Date.now() - 91 * 60 * 1000;
+
+  it("forces exit after 90m when trail never armed", () => {
+    const r = shouldTimeExit({
+      openedAtMs: opened,
+      peakExitPx: 105,
+      entryPremium: 100,
+    });
+    expect(r.exit).toBe(true);
+    expect(r.limitMin).toBe(MAX_HOLD_MS / 60000);
+  });
+
+  it("allows up to 120m when trail was armed", () => {
+    const r = shouldTimeExit({
+      openedAtMs: opened,
+      peakExitPx: 115,
+      entryPremium: 100,
+    });
+    expect(r.exit).toBe(false);
+    expect(r.limitMin).toBe(MAX_HOLD_TRAIL_MS / 60000);
+  });
+
+  it("exits trail-armed position after 120m", () => {
+    const r = shouldTimeExit({
+      openedAtMs: Date.now() - 121 * 60 * 1000,
+      peakExitPx: 115,
+      entryPremium: 100,
+    });
+    expect(r.exit).toBe(true);
+  });
+
+  it("holds under 90m", () => {
+    const r = shouldTimeExit({
+      openedAtMs: Date.now() - 60 * 60 * 1000,
+      peakExitPx: 100,
+      entryPremium: 100,
+    });
+    expect(r.exit).toBe(false);
   });
 });
 

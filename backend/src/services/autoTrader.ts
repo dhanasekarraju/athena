@@ -9,7 +9,7 @@ import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_LOSS_MS, STOP_LOSS_COOLDOW
 import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
 import { getTrendVerdict, verdictAllows } from "./trendJudge.js";
-import { buildEntryLevels, decideLongExit } from "./exitLogic.js";
+import { buildEntryLevels, decideLongExit, shouldTimeExit } from "./exitLogic.js";
 
 function defaultContractValue(symbol: string): number {
   const u = symbol.toUpperCase();
@@ -736,6 +736,7 @@ export class AutoTrader {
     size: number;
     paper: boolean;
     signalSnapshot: unknown;
+    openedAt: Date;
   }): Promise<void> {
     const cfg = await getBotConfig(this.prisma);
     const ticker = await this.client.getTicker(pos.productSymbol);
@@ -771,29 +772,52 @@ export class AutoTrader {
       });
     }
 
-    if (!decision.reason) {
-      // Near levels: helpful live-log breadcrumbs (not every hold)
-      const nearSl =
-        decision.exitPx > 0 && decision.exitPx <= decision.effectiveSl * 1.08;
-      const nearTp =
-        decision.exitPx > 0 && decision.exitPx >= decision.effectiveTp * 0.92;
-      if (nearSl || nearTp) {
-        this.log.info(
-          {
-            id: pos.id,
-            product: pos.productSymbol,
-            ...quotes,
-            effectiveSl: decision.effectiveSl,
-            effectiveTp: decision.effectiveTp,
-            detail: decision.detail,
-          },
-          "AutoTrader near exit levels",
-        );
-      }
+    if (decision.reason) {
+      await this.executeExit(pos, decision.exitPx, decision.reason);
       return;
     }
 
-    await this.executeExit(pos, decision.exitPx, decision.reason);
+    const timeGate = shouldTimeExit({
+      openedAtMs: pos.openedAt.getTime(),
+      peakExitPx: decision.peakExitPx,
+      entryPremium: pos.entryPremium,
+    });
+    if (timeGate.exit) {
+      const exitPx = decision.exitPx > 0 ? decision.exitPx : quotes.mark || quotes.bid;
+      this.pushActivity(
+        "exit",
+        `Time cap ${pos.productSymbol} after ${timeGate.holdMin}m (max ${timeGate.limitMin}m)`,
+        {
+          symbol: pos.productSymbol,
+          details: { holdMin: timeGate.holdMin, limitMin: timeGate.limitMin, exitPx },
+        },
+      );
+      this.log.info(
+        { id: pos.id, product: pos.productSymbol, ...timeGate, exitPx },
+        "AutoTrader time-stop exit",
+      );
+      await this.executeExit(pos, exitPx, "time_stop");
+      return;
+    }
+
+    // Near levels: helpful live-log breadcrumbs (not every hold)
+    const nearSl =
+      decision.exitPx > 0 && decision.exitPx <= decision.effectiveSl * 1.08;
+    const nearTp =
+      decision.exitPx > 0 && decision.exitPx >= decision.effectiveTp * 0.92;
+    if (nearSl || nearTp) {
+      this.log.info(
+        {
+          id: pos.id,
+          product: pos.productSymbol,
+          ...quotes,
+          effectiveSl: decision.effectiveSl,
+          effectiveTp: decision.effectiveTp,
+          detail: decision.detail,
+        },
+        "AutoTrader near exit levels",
+      );
+    }
   }
 
   private async executeExit(
