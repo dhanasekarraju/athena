@@ -33,7 +33,6 @@ export type ExitReason =
   | "take_profit_1"
   | "trail_stop"
   | "protect_breakeven"
-  | "time_stop"
   | null;
 
 export interface ExitDecision {
@@ -192,49 +191,6 @@ export function buildEntryLevels(input: {
   }
 
   return { stopLoss, takeProfit1, tpSource, slSource };
-}
-
-/** Max hold before theta/stale thesis force-exit (options decay every hour). */
-export const MAX_HOLD_MS = 90 * 60 * 1000;
-
-/** Extra room when trail was armed — still cap total hold. */
-export const MAX_HOLD_TRAIL_MS = 120 * 60 * 1000;
-
-/** Min premium gain (+3%) before a time-cap exit — don't force-sell red. */
-export const TIME_STOP_MIN_GREEN = 0.03;
-
-export function shouldTimeExit(input: {
-  openedAtMs: number;
-  nowMs?: number;
-  peakExitPx: number;
-  entryPremium: number;
-  /** Current executable exit price (bid/mark). */
-  exitPx: number;
-  trailArmAt?: number;
-}): { exit: boolean; holdMin: number; limitMin: number; greenPct?: number } {
-  const now = input.nowMs ?? Date.now();
-  const holdMs = Math.max(0, now - input.openedAtMs);
-  const trailArmAt = input.trailArmAt ?? 1.1;
-  const armed = input.peakExitPx >= input.entryPremium * trailArmAt;
-  const limitMs = armed ? MAX_HOLD_TRAIL_MS : MAX_HOLD_MS;
-  const holdMin = Math.round(holdMs / 60000);
-  const limitMin = Math.round(limitMs / 60000);
-
-  if (holdMs < limitMs) {
-    return { exit: false, holdMin, limitMin };
-  }
-
-  const greenPct =
-    input.exitPx > 0 && input.entryPremium > 0
-      ? (input.exitPx - input.entryPremium) / input.entryPremium
-      : -1;
-
-  // Past cap: only lock a stagnant small winner; red/flat stays on SL/trail.
-  if (greenPct >= TIME_STOP_MIN_GREEN) {
-    return { exit: true, holdMin, limitMin, greenPct };
-  }
-
-  return { exit: false, holdMin, limitMin, greenPct };
 }
 
 export type SignalSellReason =
