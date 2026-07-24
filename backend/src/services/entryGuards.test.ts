@@ -70,7 +70,7 @@ describe("evaluateEntryGuards", () => {
     const r = evaluateEntryGuards({
       ...base,
       direction: "BUY_CALL",
-      lastStopLossAt: new Date(now - 10 * 60 * 1000).toISOString(),
+      lastStopLossAt: new Date(now - 2 * 60 * 1000).toISOString(),
       nowMs: now,
     });
     expect(r.ok).toBe(false);
@@ -99,12 +99,12 @@ describe("evaluateEntryGuards", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("blocks same-direction re-entry within 20m after a win", () => {
+  it("blocks same-direction re-entry within 5m after a win", () => {
     const now = Date.now();
     const r = evaluateEntryGuards({
       ...base,
       direction: "BUY_PUT",
-      lastSameDirectionCloseAt: new Date(now - 10 * 60 * 1000).toISOString(),
+      lastSameDirectionCloseAt: new Date(now - 2 * 60 * 1000).toISOString(),
       lastSameDirectionExitReason: "trail_stop",
       nowMs: now,
     });
@@ -112,12 +112,12 @@ describe("evaluateEntryGuards", () => {
     expect(r.reason).toMatch(/same-direction cooldown/i);
   });
 
-  it("blocks same-direction re-entry within 45m after stop_loss", () => {
+  it("blocks same-direction re-entry within 5m after stop_loss", () => {
     const now = Date.now();
     const r = evaluateEntryGuards({
       ...base,
       direction: "BUY_PUT",
-      lastSameDirectionCloseAt: new Date(now - 30 * 60 * 1000).toISOString(),
+      lastSameDirectionCloseAt: new Date(now - 2 * 60 * 1000).toISOString(),
       lastSameDirectionExitReason: "stop_loss",
       nowMs: now,
     });
@@ -125,7 +125,7 @@ describe("evaluateEntryGuards", () => {
     expect(r.reason).toMatch(/same-direction cooldown/i);
   });
 
-  it("allows same-direction re-entry 25m after a win", () => {
+  it("allows same-direction re-entry after 5m win cooldown", () => {
     const now = Date.now();
     const r = evaluateEntryGuards({
       ...base,
@@ -136,7 +136,7 @@ describe("evaluateEntryGuards", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("allows same-direction re-entry after loss cooldown expires", () => {
+  it("allows same-direction re-entry after 5m loss cooldown", () => {
     const now = Date.now();
     const r = evaluateEntryGuards({
       ...base,

@@ -38,18 +38,18 @@ export const BLOCKED_ENTRY_TIMEFRAMES = new Set(["1m", "1min", "1"]);
 /**
  * Wait after a stop-loss before re-entering the *same direction* on that coin.
  * Opposite side stays free (CALL SL → PUT can fire immediately on flip).
- * 25m is enough to break same-side revenge without missing the reverse trade.
+ * 5m — crypto options momentum fades fast; Gemini still gates the re-entry.
  */
-export const STOP_LOSS_COOLDOWN_MS = 25 * 60 * 1000;
+export const STOP_LOSS_COOLDOWN_MS = 5 * 60 * 1000;
 
 /** Do not enter a move that has already been running this long at min confidence. */
 export const MAX_DIRECTION_AGE_MS = 90 * 60 * 1000;
 
 /** After a win/trail/BE on this direction — brief pause, don't double-tap. */
-export const SAME_DIRECTION_COOLDOWN_WIN_MS = 20 * 60 * 1000;
+export const SAME_DIRECTION_COOLDOWN_WIN_MS = 5 * 60 * 1000;
 
-/** After stop_loss on this direction — longer pause before same-side re-entry. */
-export const SAME_DIRECTION_COOLDOWN_LOSS_MS = 45 * 60 * 1000;
+/** After stop_loss on this direction — same short pause; momentum check happens next. */
+export const SAME_DIRECTION_COOLDOWN_LOSS_MS = 5 * 60 * 1000;
 
 /** @deprecated use sameDirectionCooldownMs() */
 export const SAME_DIRECTION_COOLDOWN_MS = SAME_DIRECTION_COOLDOWN_LOSS_MS;
