@@ -8,7 +8,7 @@ import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
 import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_LOSS_MS, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
 import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
-import { getTrendVerdict, verdictAllows } from "./trendJudge.js";
+import { getTrendVerdict, shouldMomentumExit, verdictAllows } from "./trendJudge.js";
 import { buildEntryLevels, decideLongExit } from "./exitLogic.js";
 
 function defaultContractValue(symbol: string): number {
@@ -79,6 +79,8 @@ export class AutoTrader {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
   private readonly activity: BotActivityEvent[] = [];
+  /** Throttle Gemini momentum-exit checks per position (monitor is 5s). */
+  private readonly momentumExitCheckedAt = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaClient,
@@ -312,10 +314,9 @@ export class AutoTrader {
         (pos.direction === "BUY_PUT" && signal.direction === "BUY_CALL");
       if (!isFlip) continue;
 
-      // Grace period: give a fresh position time to work before a flip can
-      // close it (price SL/TP/trail still protect it every ~5s).
+      // Grace: price SL/TP/trail protect immediately; flip sell waits briefly.
       const ageMs = Date.now() - new Date(pos.openedAt).getTime();
-      if (ageMs < 10 * 60 * 1000) continue;
+      if (ageMs < 5 * 60 * 1000) continue;
 
       let exitPx = pos.entryPremium;
       try {
@@ -730,12 +731,15 @@ export class AutoTrader {
     id: string;
     productId: number;
     productSymbol: string;
+    underlying: string;
+    direction: string;
     entryPremium: number;
     stopLoss: number;
     takeProfit1: number;
     size: number;
     paper: boolean;
     signalSnapshot: unknown;
+    openedAt: Date;
   }): Promise<void> {
     const cfg = await getBotConfig(this.prisma);
     const ticker = await this.client.getTicker(pos.productSymbol);
@@ -771,29 +775,70 @@ export class AutoTrader {
       });
     }
 
-    if (!decision.reason) {
-      // Near levels: helpful live-log breadcrumbs (not every hold)
-      const nearSl =
-        decision.exitPx > 0 && decision.exitPx <= decision.effectiveSl * 1.08;
-      const nearTp =
-        decision.exitPx > 0 && decision.exitPx >= decision.effectiveTp * 0.92;
-      if (nearSl || nearTp) {
-        this.log.info(
-          {
-            id: pos.id,
-            product: pos.productSymbol,
-            ...quotes,
-            effectiveSl: decision.effectiveSl,
-            effectiveTp: decision.effectiveTp,
-            detail: decision.detail,
-          },
-          "AutoTrader near exit levels",
-        );
-      }
+    if (decision.reason) {
+      await this.executeExit(pos, decision.exitPx, decision.reason);
       return;
     }
 
-    await this.executeExit(pos, decision.exitPx, decision.reason);
+    // Adverse 1m+5m (Gemini): cut small instead of waiting for late AI flip / full SL.
+    // Fees are the same at −₹50 or −₹200 — save the extra loss when momentum flipped.
+    const exitPx = decision.exitPx > 0 ? decision.exitPx : quotes.mark || quotes.bid;
+    const lastMom = this.momentumExitCheckedAt.get(pos.id) ?? 0;
+    if (Date.now() - lastMom >= 45_000) {
+      this.momentumExitCheckedAt.set(pos.id, Date.now());
+      try {
+        const verdict = await getTrendVerdict(pos.underlying, this.log, {
+          maxCacheAgeMs: 60_000,
+        });
+        const mom = shouldMomentumExit({
+          positionDirection: pos.direction as "BUY_CALL" | "BUY_PUT",
+          verdict,
+          entryPremium: pos.entryPremium,
+          exitPx,
+          openedAtMs: pos.openedAt.getTime(),
+        });
+        if (mom.exit) {
+          this.pushActivity("exit", `Momentum exit ${pos.productSymbol} — ${mom.why}`, {
+            symbol: pos.underlying,
+            details: {
+              reason: "momentum_flip",
+              trend: verdict.trend,
+              strength: verdict.strength,
+              frames: verdict.frames,
+              exitPx,
+            },
+          });
+          this.log.info(
+            { id: pos.id, product: pos.productSymbol, verdict, why: mom.why, exitPx },
+            "AutoTrader momentum-flip exit",
+          );
+          await this.executeExit(pos, exitPx, "momentum_flip");
+          this.momentumExitCheckedAt.delete(pos.id);
+          return;
+        }
+      } catch (err) {
+        this.log.warn({ err, id: pos.id }, "Momentum exit check failed — holding");
+      }
+    }
+
+    // Near levels: helpful live-log breadcrumbs (not every hold)
+    const nearSl =
+      decision.exitPx > 0 && decision.exitPx <= decision.effectiveSl * 1.08;
+    const nearTp =
+      decision.exitPx > 0 && decision.exitPx >= decision.effectiveTp * 0.92;
+    if (nearSl || nearTp) {
+      this.log.info(
+        {
+          id: pos.id,
+          product: pos.productSymbol,
+          ...quotes,
+          effectiveSl: decision.effectiveSl,
+          effectiveTp: decision.effectiveTp,
+          detail: decision.detail,
+        },
+        "AutoTrader near exit levels",
+      );
+    }
   }
 
   private async executeExit(

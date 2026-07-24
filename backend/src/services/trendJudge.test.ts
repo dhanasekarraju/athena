@@ -5,7 +5,12 @@ process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
 process.env.JWT_SECRET ??= "test-secret-test-secret";
 process.env.JWT_REFRESH_SECRET ??= "test-secret-test-secret";
 
-const { parseVerdict, verdictAllows } = await import("./trendJudge.js");
+const {
+  parseVerdict,
+  verdictAllows,
+  shouldMomentumExit,
+  MOMENTUM_EXIT_MIN_STRENGTH,
+} = await import("./trendJudge.js");
 type TrendVerdict = import("./trendJudge.js").TrendVerdict;
 
 describe("parseVerdict", () => {
@@ -108,5 +113,100 @@ describe("verdictAllows", () => {
       '{"trend":"down","strength":80,"frames":["1m","5m","15m"],"reason":"all down"}',
     );
     expect(v!.frames).toEqual(["1m", "5m", "15m"]);
+  });
+});
+
+describe("shouldMomentumExit", () => {
+  const opened = Date.now() - 5 * 60 * 1000;
+  const adverseDown: TrendVerdict = {
+    trend: "down",
+    strength: 75,
+    reason: "1m+5m down",
+    source: "gemini",
+    frames: ["1m", "5m"],
+  };
+
+  it("exits CALL when 1m+5m turn down and not meaningfully green", () => {
+    const r = shouldMomentumExit({
+      positionDirection: "BUY_CALL",
+      verdict: adverseDown,
+      entryPremium: 100,
+      exitPx: 95,
+      openedAtMs: opened,
+    });
+    expect(r.exit).toBe(true);
+  });
+
+  it("does not exit during grace period", () => {
+    const r = shouldMomentumExit({
+      positionDirection: "BUY_CALL",
+      verdict: adverseDown,
+      entryPremium: 100,
+      exitPx: 95,
+      openedAtMs: Date.now() - 60_000,
+    });
+    expect(r.exit).toBe(false);
+    expect(r.why).toMatch(/grace/i);
+  });
+
+  it("does not exit winners already +3% — leave to trail", () => {
+    const r = shouldMomentumExit({
+      positionDirection: "BUY_CALL",
+      verdict: adverseDown,
+      entryPremium: 100,
+      exitPx: 104,
+      openedAtMs: opened,
+    });
+    expect(r.exit).toBe(false);
+    expect(r.why).toMatch(/trail/i);
+  });
+
+  it("does not exit on chop or unavailable (fail-closed)", () => {
+    expect(
+      shouldMomentumExit({
+        positionDirection: "BUY_CALL",
+        verdict: { ...adverseDown, trend: "chop" },
+        entryPremium: 100,
+        exitPx: 95,
+        openedAtMs: opened,
+      }).exit,
+    ).toBe(false);
+    expect(
+      shouldMomentumExit({
+        positionDirection: "BUY_CALL",
+        verdict: { ...adverseDown, source: "unavailable" },
+        entryPremium: 100,
+        exitPx: 95,
+        openedAtMs: opened,
+      }).exit,
+    ).toBe(false);
+  });
+
+  it("does not exit on weak adverse strength", () => {
+    const r = shouldMomentumExit({
+      positionDirection: "BUY_CALL",
+      verdict: { ...adverseDown, strength: MOMENTUM_EXIT_MIN_STRENGTH - 1 },
+      entryPremium: 100,
+      exitPx: 95,
+      openedAtMs: opened,
+    });
+    expect(r.exit).toBe(false);
+  });
+
+  it("exits PUT when 1m+5m turn up", () => {
+    const r = shouldMomentumExit({
+      positionDirection: "BUY_PUT",
+      verdict: {
+        trend: "up",
+        strength: 80,
+        reason: "1m+5m up",
+        source: "gemini",
+        frames: ["1m", "5m"],
+      },
+      entryPremium: 100,
+      exitPx: 97,
+      openedAtMs: opened,
+    });
+    expect(r.exit).toBe(true);
   });
 });

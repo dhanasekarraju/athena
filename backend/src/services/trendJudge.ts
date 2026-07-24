@@ -30,6 +30,7 @@ const PAIRS: Record<string, string> = { BTC: "BTCUSDT", ETH: "ETHUSDT", SOL: "SO
 interface CacheEntry {
   verdict: TrendVerdict;
   expiresAt: number;
+  fetchedAt: number;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -116,6 +117,83 @@ export function verdictAllows(
   return { ok: true, why: `trend ${verdict.trend} (${verdict.strength}) agrees` };
 }
 
+/** Min Gemini strength to cut an open position on adverse 1m+5m momentum. */
+export const MOMENTUM_EXIT_MIN_STRENGTH = 60;
+
+/** Don't momentum-exit in the first minutes — let fill + first ticks settle. */
+export const MOMENTUM_EXIT_GRACE_MS = 3 * 60 * 1000;
+
+/**
+ * If already this far green, leave to trail/TP — momentum exit is for cutting
+ * losers early (fees are the same at −₹50 or −₹200).
+ */
+export const MOMENTUM_EXIT_MAX_GREEN = 0.03;
+
+/**
+ * Should we exit an open long because Gemini 1m+5m turned against us?
+ * Fail-closed: unavailable/chop never force a sell (price SL still protects).
+ */
+export function shouldMomentumExit(input: {
+  positionDirection: "BUY_CALL" | "BUY_PUT";
+  verdict: TrendVerdict;
+  entryPremium: number;
+  exitPx: number;
+  openedAtMs: number;
+  nowMs?: number;
+}): { exit: boolean; why: string } {
+  const now = input.nowMs ?? Date.now();
+  const ageMs = now - input.openedAtMs;
+  if (ageMs < MOMENTUM_EXIT_GRACE_MS) {
+    return { exit: false, why: `grace ${Math.ceil((MOMENTUM_EXIT_GRACE_MS - ageMs) / 60000)}m left` };
+  }
+
+  if (input.verdict.source !== "gemini") {
+    return { exit: false, why: "trend judge unavailable — hold for SL/trail" };
+  }
+  if (input.verdict.trend === "chop") {
+    return { exit: false, why: "chop — no momentum exit" };
+  }
+
+  const adverse =
+    (input.positionDirection === "BUY_CALL" && input.verdict.trend === "down") ||
+    (input.positionDirection === "BUY_PUT" && input.verdict.trend === "up");
+  if (!adverse) {
+    return { exit: false, why: `trend ${input.verdict.trend} still agrees with position` };
+  }
+
+  if (input.verdict.strength < MOMENTUM_EXIT_MIN_STRENGTH) {
+    return {
+      exit: false,
+      why: `adverse but weak (${input.verdict.strength} < ${MOMENTUM_EXIT_MIN_STRENGTH})`,
+    };
+  }
+
+  const frames = input.verdict.frames ?? [];
+  const core =
+    hasCoreMomentum(frames) || (frames.length === 0 && input.verdict.strength >= 70);
+  if (!core) {
+    return {
+      exit: false,
+      why: `adverse needs 1m+5m (got ${frames.join("+") || "none"})`,
+    };
+  }
+
+  if (input.entryPremium > 0 && input.exitPx > 0) {
+    const greenPct = (input.exitPx - input.entryPremium) / input.entryPremium;
+    if (greenPct >= MOMENTUM_EXIT_MAX_GREEN) {
+      return {
+        exit: false,
+        why: `already +${(greenPct * 100).toFixed(1)}% — leave to trail`,
+      };
+    }
+  }
+
+  return {
+    exit: true,
+    why: `1m+5m ${input.verdict.trend} (${input.verdict.strength}) against ${input.positionDirection} — ${input.verdict.reason}`,
+  };
+}
+
 async function fetchCloses(pair: string, interval: string, limit: number): Promise<number[]> {
   const url = `${BINANCE_KLINES}?symbol=${pair}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
@@ -199,10 +277,16 @@ async function askGemini(symbol: string, log: FastifyBaseLogger): Promise<TrendV
 export async function getTrendVerdict(
   symbol: string,
   log: FastifyBaseLogger,
+  opts?: { maxCacheAgeMs?: number },
 ): Promise<TrendVerdict> {
   const sym = symbol.toUpperCase();
   const hit = cache.get(sym);
-  if (hit && hit.expiresAt > Date.now()) return hit.verdict;
+  const maxAge = opts?.maxCacheAgeMs;
+  const cacheOk =
+    hit &&
+    hit.expiresAt > Date.now() &&
+    (maxAge == null || Date.now() - hit.fetchedAt <= maxAge);
+  if (cacheOk) return hit!.verdict;
 
   let verdict: TrendVerdict | null = null;
   try {
@@ -219,7 +303,8 @@ export async function getTrendVerdict(
   };
   // Cache failures briefly too, so an outage doesn't hammer the API.
   const ttl = verdict ? env.TREND_JUDGE_TTL_MS : 60_000;
-  cache.set(sym, { verdict: final, expiresAt: Date.now() + ttl });
+  const fetchedAt = Date.now();
+  cache.set(sym, { verdict: final, expiresAt: fetchedAt + ttl, fetchedAt });
   if (verdict) {
     log.info(
       { symbol: sym, trend: final.trend, strength: final.strength, reason: final.reason },
