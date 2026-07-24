@@ -42,9 +42,6 @@ export const BLOCKED_ENTRY_TIMEFRAMES = new Set(["1m", "1min", "1"]);
  */
 export const STOP_LOSS_COOLDOWN_MS = 5 * 60 * 1000;
 
-/** Do not enter a move that has already been running this long at min confidence. */
-export const MAX_DIRECTION_AGE_MS = 90 * 60 * 1000;
-
 /** After a win/trail/BE on this direction — brief pause, don't double-tap. */
 export const SAME_DIRECTION_COOLDOWN_WIN_MS = 5 * 60 * 1000;
 
@@ -145,19 +142,8 @@ export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
     }
   }
 
-  if (input.directionAgeMs != null && input.directionAgeMs > MAX_DIRECTION_AGE_MS) {
-    const ageMin = Math.round(input.directionAgeMs / 60000);
-    return {
-      ok: false,
-      reason: `move too extended (${ageMin}m active, max ${MAX_DIRECTION_AGE_MS / 60000}m)`,
-      requiredConfidence: required,
-      details: {
-        directionAgeMs: input.directionAgeMs,
-        maxDirectionAgeMs: MAX_DIRECTION_AGE_MS,
-        ageMin,
-      },
-    };
-  }
+  // No hard max on direction age — long trends can still be tradeable.
+  // Weak MACD-only signals on tired moves still need ≥3 reasons (below).
 
   const reasons = input.reasonCount ?? 0;
   if (

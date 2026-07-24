@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  MAX_DIRECTION_AGE_MS,
   SAME_DIRECTION_COOLDOWN_LOSS_MS,
   SAME_DIRECTION_COOLDOWN_WIN_MS,
   STOP_LOSS_COOLDOWN_MS,
@@ -147,13 +146,13 @@ describe("evaluateEntryGuards", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("blocks when direction has been active too long", () => {
+  it("allows extended moves when reasons are strong enough", () => {
     const r = evaluateEntryGuards({
       ...base,
-      directionAgeMs: MAX_DIRECTION_AGE_MS + 60_000,
+      directionAgeMs: 121 * 60 * 1000,
+      reasonCount: TIRED_MOVE_MIN_REASONS,
     });
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/too extended/i);
+    expect(r.ok).toBe(true);
   });
 
   it("blocks weak reasons on a tired move", () => {
