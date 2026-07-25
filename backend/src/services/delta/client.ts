@@ -8,7 +8,13 @@ export interface DeltaTicker {
   mark_price?: string;
   best_bid?: string | null;
   best_ask?: string | null;
+  /** Legacy / global Delta field — often absent on India tickers. */
   open_interest?: string | number;
+  /** India Delta: coin-denominated OI (can be &lt; 10 for thin BTC). */
+  oi?: string | number;
+  /** India Delta: contract count — prefer this for liquidity guards. */
+  oi_contracts?: string | number;
+  oi_value?: string | number;
   strike_price?: string | number;
   contract_type?: string;
   contract_value?: string | number;

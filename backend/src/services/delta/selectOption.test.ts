@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectDeltaOption } from "./selectOption.js";
+import { selectDeltaOption, tickerOpenInterest } from "./selectOption.js";
 import type { DeltaTicker } from "./client.js";
 
 function ticker(partial: Partial<DeltaTicker> & { symbol: string; product_id: number }): DeltaTicker {
@@ -9,6 +9,26 @@ function ticker(partial: Partial<DeltaTicker> & { symbol: string; product_id: nu
     ...partial,
   };
 }
+
+describe("tickerOpenInterest", () => {
+  it("prefers oi_contracts over coin oi / legacy open_interest", () => {
+    expect(
+      tickerOpenInterest({
+        product_id: 1,
+        symbol: "P-BTC-64000-310726",
+        oi: "7.8",
+        oi_contracts: "7827",
+        open_interest: 3,
+      }),
+    ).toBe(7827);
+  });
+
+  it("falls back to open_interest then oi", () => {
+    expect(tickerOpenInterest({ product_id: 1, symbol: "X", open_interest: 40 })).toBe(40);
+    expect(tickerOpenInterest({ product_id: 1, symbol: "X", oi: "12.5" })).toBe(12.5);
+    expect(tickerOpenInterest({ product_id: 1, symbol: "X" })).toBe(0);
+  });
+});
 
 describe("selectDeltaOption", () => {
   const now = new Date("2025-03-21T08:00:00Z");

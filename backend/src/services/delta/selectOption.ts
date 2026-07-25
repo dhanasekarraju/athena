@@ -14,6 +14,13 @@ function bidAsk(t: DeltaTicker): { bid: number; ask: number } {
   };
 }
 
+/** Prefer contract-count OI (India `oi_contracts`); fall back to legacy fields. */
+export function tickerOpenInterest(t: DeltaTicker): number {
+  const raw = t.oi_contracts ?? t.open_interest ?? t.oi ?? 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 export interface SelectedDeltaOption {
   productId: number;
   productSymbol: string;
@@ -102,8 +109,8 @@ export function selectDeltaOption(
     const da = Math.abs(a.meta.strike - target);
     const db = Math.abs(b.meta.strike - target);
     if (da !== db) return da - db;
-    const oiA = Number(a.t.open_interest ?? 0);
-    const oiB = Number(b.t.open_interest ?? 0);
+    const oiA = tickerOpenInterest(a.t);
+    const oiB = tickerOpenInterest(b.t);
     if (oiB !== oiA) return oiB - oiA;
     const { bid: bidA, ask: askA } = bidAsk(a.t);
     const { bid: bidB, ask: askB } = bidAsk(b.t);
@@ -125,7 +132,7 @@ export function selectDeltaOption(
     markPremium: best.mark,
     bid,
     ask,
-    openInterest: Number(best.t.open_interest ?? 0),
+    openInterest: tickerOpenInterest(best.t),
     contractValue,
   };
 }
