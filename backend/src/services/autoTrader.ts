@@ -10,7 +10,15 @@ import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
 import { buildEntryLevels, decideLongExit, isOneMinuteTimeframe, shouldQuickFailExit } from "./exitLogic.js";
 import { getTrendVerdict, shouldMomentumExit, verdictAllows } from "./trendJudge.js";
-import { notifyBuy, notifySell } from "./pushService.js";
+import { notifyBuy, notifySell, notifyTrade } from "./pushService.js";
+import { extractFilledSize, reconcileEntryFill } from "./orderFill.js";
+import { evaluateLiquidityGuard } from "./liquidityGuard.js";
+import {
+  countTrailingStopLosses,
+  evaluateCircuitBreaker,
+  startOfIstTradingDay,
+} from "./circuitBreaker.js";
+import { getUsdInrRate } from "./usdInr.js";
 
 function defaultContractValue(symbol: string): number {
   const u = symbol.toUpperCase();
@@ -136,6 +144,10 @@ export class AutoTrader {
     this.killed = true;
     this.pushActivity("info", `Kill switch ON (${reason})`);
     this.log.warn({ reason }, "AutoTrader killed — no new entries, exits still monitored");
+    notifyTrade(this.prisma, this.log, {
+      title: "Athena kill switch ON",
+      body: reason,
+    });
   }
 
   resume() {
@@ -188,6 +200,10 @@ export class AutoTrader {
       });
       return;
     }
+
+    // Account-wide loss circuit breaker (IST day + consecutive SLs).
+    const tripped = await this.checkCircuitBreaker(cfg);
+    if (tripped) return;
 
     if (!cfg.symbols.includes(sym)) {
       this.pushActivity("skip", `${sym} skipped — not in bot symbols`, {
@@ -356,7 +372,13 @@ export class AutoTrader {
 
   private async tryEnter(signal: AutonSignal, cfg: RuntimeBotConfig): Promise<void> {
     const sym = signal.symbol.toUpperCase();
-    const usdInr = env.USD_INR_RATE;
+    const fx = await getUsdInrRate(this.log);
+    const usdInr = fx.rate;
+    if (fx.warned) {
+      this.pushActivity("info", `FX note: ${fx.warned}`, {
+        details: { rate: usdInr, source: fx.source },
+      });
+    }
     const paperMode = cfg.paperTrading || !this.client.configured;
     const open = await this.prisma.botPosition.findMany({
       where: { status: "OPEN", paper: paperMode },
@@ -468,6 +490,28 @@ export class AutoTrader {
       return;
     }
 
+    const liq = evaluateLiquidityGuard({
+      bid: selected.bid,
+      ask: selected.ask,
+      mark: selected.markPremium,
+      openInterest: selected.openInterest,
+      maxSpreadPct: cfg.maxSpreadPct,
+      minOpenInterest: cfg.minOpenInterest,
+    });
+    if (!liq.ok) {
+      this.pushActivity("skip", `${sym} skipped — ${liq.reason}`, {
+        symbol: sym,
+        details: {
+          product: selected.productSymbol,
+          bid: selected.bid,
+          ask: selected.ask,
+          oi: selected.openInterest,
+        },
+      });
+      this.log.info({ symbol: sym, reason: liq.reason, product: selected.productSymbol }, "Skip auto entry: liquidity");
+      return;
+    }
+
     const premium = selected.ask > 0 ? selected.ask : selected.markPremium;
     if (premium <= 0) {
       this.pushActivity("skip", `${sym} skipped — premium ≤ 0`, {
@@ -522,7 +566,9 @@ export class AutoTrader {
 
     let entryOrderId: string | null = null;
     let fillPremium = premium;
+    let fillSize = size;
     const paper = paperMode;
+    const requestedSize = size;
 
     if (paper) {
       entryOrderId = `paper-${clientOrderId}`;
@@ -530,7 +576,7 @@ export class AutoTrader {
         {
           paper: true,
           product: selected.productSymbol,
-          size,
+          size: fillSize,
           premium,
           contractValue: selected.contractValue,
           notionalInr,
@@ -543,12 +589,74 @@ export class AutoTrader {
         productId: selected.productId,
         productSymbol: selected.productSymbol,
         side: "buy",
-        size,
+        size: requestedSize,
         clientOrderId,
       });
       entryOrderId = String(order.id);
       fillPremium = Number(order.average_fill_price || premium) || premium;
-      this.log.info({ orderId: entryOrderId, product: selected.productSymbol, size }, "LIVE buy submitted");
+      const filledFromOrder = extractFilledSize(order);
+      const reconciled = reconcileEntryFill({
+        requestedSize,
+        filledSize: filledFromOrder,
+        state: order.state,
+      });
+
+      if (!reconciled.ok) {
+        // Unwind any short/bad fill still resting as a long on Delta.
+        if (reconciled.fillSize > 0) {
+          try {
+            const unwindId = `ath-uw-${randomUUID().replace(/-/g, "").slice(0, 22)}`;
+            await this.client.placeMarketOrder({
+              productId: selected.productId,
+              productSymbol: selected.productSymbol,
+              side: "sell",
+              size: reconciled.fillSize,
+              clientOrderId: unwindId,
+              reduceOnly: true,
+            });
+            this.log.warn(
+              { fillSize: reconciled.fillSize, why: reconciled.why, product: selected.productSymbol },
+              "Unwound short/rejected entry fill",
+            );
+          } catch (err) {
+            this.log.error(
+              { err, fillSize: reconciled.fillSize, product: selected.productSymbol },
+              "Failed to unwind short entry fill — check Delta book",
+            );
+            this.pushActivity("error", `${sym} SHORT FILL UNWIND FAILED ×${reconciled.fillSize} ${selected.productSymbol}`, {
+              symbol: sym,
+              details: { why: reconciled.why, fillSize: reconciled.fillSize },
+            });
+          }
+        }
+        this.pushActivity("skip", `${sym} entry aborted — ${reconciled.why}`, {
+          symbol: sym,
+          details: {
+            requestedSize,
+            filledSize: reconciled.fillSize,
+            state: order.state,
+            product: selected.productSymbol,
+          },
+        });
+        this.log.info(
+          { orderId: entryOrderId, requestedSize, filled: filledFromOrder, state: order.state, why: reconciled.why },
+          "Skip auto entry: fill reconcile",
+        );
+        return;
+      }
+
+      fillSize = reconciled.fillSize;
+      this.log.info(
+        {
+          orderId: entryOrderId,
+          product: selected.productSymbol,
+          requestedSize,
+          fillSize,
+          partial: reconciled.partial,
+          state: order.state,
+        },
+        "LIVE buy filled",
+      );
     }
 
     // SL + TP1 independent: tighter of settings/AI for SL; AI TP1 capped near settings (never wait for TP2).
@@ -564,7 +672,7 @@ export class AutoTrader {
     const { stopLoss, takeProfit1, tpSource, slSource } = levels;
 
     const fillCostInr =
-      contractCostUsd(fillPremium, selected.contractValue) * size * usdInr;
+      contractCostUsd(fillPremium, selected.contractValue) * fillSize * usdInr;
 
     await this.prisma.botPosition.create({
       data: {
@@ -573,7 +681,7 @@ export class AutoTrader {
         productSymbol: selected.productSymbol,
         underlying: sym,
         direction: signal.direction,
-        size,
+        size: fillSize,
         entryPremium: fillPremium,
         stopLoss,
         takeProfit1,
@@ -589,7 +697,8 @@ export class AutoTrader {
           tpSource,
           slSource,
           peakExitPx: fillPremium,
-          originalSize: size,
+          originalSize: fillSize,
+          requestedSize,
           aiPremium: {
             entry: signal.premium_entry ?? null,
             target_1: signal.premium_target_1 ?? null,
@@ -598,11 +707,12 @@ export class AutoTrader {
           },
           planned: {
             notionalInr: fillCostInr,
-            notionalUsd,
+            notionalUsd: fillSize * costPerContractUsd,
             costInr: fillCostInr,
             costPerContractInr,
             contractValue: selected.contractValue,
             usdInr,
+            usdInrSource: fx.source,
             budget,
             stopLoss,
             takeProfit1,
@@ -615,12 +725,15 @@ export class AutoTrader {
 
     this.pushActivity(
       "trade",
-      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${size} @ ${fillPremium.toFixed(2)} (≈₹${fillCostInr.toFixed(0)}) SL ${stopLoss.toFixed(2)} [${slSource}] TP ${takeProfit1.toFixed(2)} [${tpSource}]`,
+      `${paper ? "PAPER" : "LIVE"} BUY ${signal.direction} ${selected.productSymbol} ×${fillSize}${
+        fillSize !== requestedSize ? ` (req ${requestedSize})` : ""
+      } @ ${fillPremium.toFixed(2)} (≈₹${fillCostInr.toFixed(0)}) SL ${stopLoss.toFixed(2)} [${slSource}] TP ${takeProfit1.toFixed(2)} [${tpSource}]`,
       {
         symbol: sym,
         details: {
           product: selected.productSymbol,
-          size,
+          size: fillSize,
+          requestedSize,
           premium: fillPremium,
           contractValue: selected.contractValue,
           notionalInr: fillCostInr,
@@ -637,7 +750,7 @@ export class AutoTrader {
       paper,
       product: selected.productSymbol,
       direction: signal.direction,
-      size,
+      size: fillSize,
       premium: fillPremium,
       confidence: signal.confidence,
       timeframe: signal.timeframe,
@@ -1054,7 +1167,67 @@ export class AutoTrader {
       pnl,
     });
 
+    // After a full close, re-check daily / consecutive loss breaker.
+    if (!pos.paper) {
+      try {
+        const cfg = await getBotConfig(this.prisma);
+        await this.checkCircuitBreaker(cfg);
+      } catch (err) {
+        this.log.warn({ err }, "Circuit breaker check after exit failed");
+      }
+    }
+
     return { ok: true, pnl, mark, paper: pos.paper };
+  }
+
+  /**
+   * If daily IST loss or consecutive SLs breach config, kill new entries.
+   * @returns true if already killed / just tripped (caller should skip entry)
+   */
+  private async checkCircuitBreaker(cfg: RuntimeBotConfig): Promise<boolean> {
+    if (this.killed) return true;
+    if (cfg.dailyLossLimitInr <= 0 && cfg.maxConsecutiveStopLosses <= 0) return false;
+
+    const dayStart = startOfIstTradingDay();
+    const closedToday = await this.prisma.botPosition.findMany({
+      where: {
+        status: "CLOSED",
+        paper: cfg.paperTrading,
+        closedAt: { gte: dayStart },
+      },
+      select: { realizedPnl: true },
+    });
+    const dayRealizedPnlInr = closedToday.reduce((s, p) => s + (p.realizedPnl ?? 0), 0);
+
+    const recent = await this.prisma.botPosition.findMany({
+      where: { status: "CLOSED", paper: cfg.paperTrading, exitReason: { not: null } },
+      orderBy: { closedAt: "desc" },
+      take: 20,
+      select: { exitReason: true },
+    });
+    const consecutiveStopLosses = countTrailingStopLosses(
+      recent.map((r) => r.exitReason ?? ""),
+    );
+
+    const verdict = evaluateCircuitBreaker({
+      dayRealizedPnlInr,
+      dailyLossLimitInr: cfg.dailyLossLimitInr,
+      consecutiveStopLosses,
+      maxConsecutiveStopLosses: cfg.maxConsecutiveStopLosses,
+    });
+    if (!verdict.trip) return false;
+
+    this.kill(`circuit_breaker: ${verdict.why}`);
+    this.pushActivity("info", `Circuit breaker — ${verdict.why}`, {
+      details: {
+        dayRealizedPnlInr,
+        dailyLossLimitInr: cfg.dailyLossLimitInr,
+        consecutiveStopLosses,
+        maxConsecutiveStopLosses: cfg.maxConsecutiveStopLosses,
+        dayStart: dayStart.toISOString(),
+      },
+    });
+    return true;
   }
 }
 

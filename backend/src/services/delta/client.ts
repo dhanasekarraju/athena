@@ -31,6 +31,9 @@ export interface DeltaOrderResult {
   state: string;
   average_fill_price?: string;
   limit_price?: string;
+  /** Present on some Delta responses — prefer for fill reconciliation. */
+  filled_size?: number | string;
+  unfilled_size?: number | string;
 }
 
 function toNum(v: unknown, fallback = 0): number {

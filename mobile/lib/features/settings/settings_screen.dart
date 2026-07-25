@@ -65,6 +65,59 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<bool> _confirmGoLive() async {
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Go live?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This enables real Delta orders. Re-enter your account password to confirm.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              decoration: const InputDecoration(hintText: 'Password'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Enable live'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) {
+      controller.dispose();
+      return false;
+    }
+    try {
+      final saved = await ref.read(botServiceProvider).goLive(password: controller.text);
+      controller.dispose();
+      if (!mounted) return true;
+      setState(() {
+        _draft = saved;
+        _savedMsg = 'LIVE trading enabled. Paper book cleared.';
+      });
+      return true;
+    } catch (e) {
+      controller.dispose();
+      if (mounted) {
+        setState(() => _error = 'Go-live failed: $e');
+      }
+      return false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final configAsync = ref.watch(botConfigProvider);
@@ -113,15 +166,66 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Paper trading'),
-                      subtitle: const Text('ON = simulate only. OFF = real Delta orders'),
+                      subtitle: const Text('ON = simulate. OFF requires password (go-live)'),
                       value: draft.paperTrading,
-                      onChanged: (v) => setState(() => _draft = draft.copyWith(paperTrading: v)),
+                      onChanged: (v) async {
+                        if (!v && draft.paperTrading) {
+                          final ok = await _confirmGoLive();
+                          if (!ok) return;
+                          ref.invalidate(botConfigProvider);
+                          setState(() {
+                            _draft = null; // reload from provider
+                          });
+                          return;
+                        }
+                        setState(() => _draft = draft.copyWith(paperTrading: v));
+                      },
                     ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Skip High risk signals'),
                       value: draft.skipHighRisk,
                       onChanged: (v) => setState(() => _draft = draft.copyWith(skipHighRisk: v)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              _sectionCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Safety limits', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Daily loss (IST) trips kill switch. Consecutive SLs too. Spread/OI block thin books.',
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                    const SizedBox(height: 10),
+                    _numberField(
+                      label: 'Daily loss limit ₹ (0=off)',
+                      value: draft.dailyLossLimitInr,
+                      onChanged: (v) => setState(() => _draft = draft.copyWith(dailyLossLimitInr: v)),
+                    ),
+                    const SizedBox(height: 10),
+                    _numberField(
+                      label: 'Max consecutive SLs (0=off)',
+                      value: draft.maxConsecutiveStopLosses.toDouble(),
+                      onChanged: (v) => setState(
+                        () => _draft = draft.copyWith(maxConsecutiveStopLosses: v.round()),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _numberField(
+                      label: 'Max spread % of mid',
+                      value: draft.maxSpreadPct * 100,
+                      onChanged: (v) => setState(() => _draft = draft.copyWith(maxSpreadPct: v / 100)),
+                    ),
+                    const SizedBox(height: 10),
+                    _numberField(
+                      label: 'Min open interest',
+                      value: draft.minOpenInterest,
+                      onChanged: (v) => setState(() => _draft = draft.copyWith(minOpenInterest: v)),
                     ),
                   ],
                 ),

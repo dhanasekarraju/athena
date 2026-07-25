@@ -8,6 +8,10 @@ class BotConfig {
   final double slFraction;
   final double tp1Fraction;
   final bool skipHighRisk;
+  final double dailyLossLimitInr;
+  final int maxConsecutiveStopLosses;
+  final double maxSpreadPct;
+  final double minOpenInterest;
   final bool killed;
   final bool deltaConfigured;
 
@@ -21,6 +25,10 @@ class BotConfig {
     required this.slFraction,
     required this.tp1Fraction,
     required this.skipHighRisk,
+    required this.dailyLossLimitInr,
+    required this.maxConsecutiveStopLosses,
+    required this.maxSpreadPct,
+    required this.minOpenInterest,
     required this.killed,
     required this.deltaConfigured,
   });
@@ -35,13 +43,18 @@ class BotConfig {
         slFraction: (json['slFraction'] as num?)?.toDouble() ?? 0.4,
         tp1Fraction: (json['tp1Fraction'] as num?)?.toDouble() ?? 0.5,
         skipHighRisk: json['skipHighRisk'] as bool? ?? true,
+        dailyLossLimitInr: (json['dailyLossLimitInr'] as num?)?.toDouble() ?? 2000,
+        maxConsecutiveStopLosses: (json['maxConsecutiveStopLosses'] as num?)?.toInt() ?? 3,
+        maxSpreadPct: (json['maxSpreadPct'] as num?)?.toDouble() ?? 0.08,
+        minOpenInterest: (json['minOpenInterest'] as num?)?.toDouble() ?? 10,
         killed: json['killed'] as bool? ?? false,
         deltaConfigured: json['deltaConfigured'] as bool? ?? false,
       );
 
+  /// General PATCH — never sends paperTrading:false (use goLive).
   Map<String, dynamic> toPatch() => {
         'autonomousEnabled': autonomousEnabled,
-        'paperTrading': paperTrading,
+        if (paperTrading) 'paperTrading': true,
         'maxOrderInr': maxOrderInr,
         'maxOpenExposureInr': maxOpenExposureInr,
         'minConfidence': minConfidence,
@@ -49,6 +62,10 @@ class BotConfig {
         'slFraction': slFraction,
         'tp1Fraction': tp1Fraction,
         'skipHighRisk': skipHighRisk,
+        'dailyLossLimitInr': dailyLossLimitInr,
+        'maxConsecutiveStopLosses': maxConsecutiveStopLosses,
+        'maxSpreadPct': maxSpreadPct,
+        'minOpenInterest': minOpenInterest,
       };
 
   BotConfig copyWith({
@@ -61,6 +78,10 @@ class BotConfig {
     double? slFraction,
     double? tp1Fraction,
     bool? skipHighRisk,
+    double? dailyLossLimitInr,
+    int? maxConsecutiveStopLosses,
+    double? maxSpreadPct,
+    double? minOpenInterest,
     bool? killed,
     bool? deltaConfigured,
   }) {
@@ -74,6 +95,10 @@ class BotConfig {
       slFraction: slFraction ?? this.slFraction,
       tp1Fraction: tp1Fraction ?? this.tp1Fraction,
       skipHighRisk: skipHighRisk ?? this.skipHighRisk,
+      dailyLossLimitInr: dailyLossLimitInr ?? this.dailyLossLimitInr,
+      maxConsecutiveStopLosses: maxConsecutiveStopLosses ?? this.maxConsecutiveStopLosses,
+      maxSpreadPct: maxSpreadPct ?? this.maxSpreadPct,
+      minOpenInterest: minOpenInterest ?? this.minOpenInterest,
       killed: killed ?? this.killed,
       deltaConfigured: deltaConfigured ?? this.deltaConfigured,
     );

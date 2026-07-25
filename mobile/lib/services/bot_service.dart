@@ -21,6 +21,15 @@ class BotService {
     return BotConfig.fromJson(Map<String, dynamic>.from(res.data as Map));
   }
 
+  /// Paper → live requires password + confirm (not a normal config PATCH).
+  Future<BotConfig> goLive({required String password}) async {
+    final res = await _api.dio.post('/api/bot/go-live', data: {
+      'password': password,
+      'confirm': true,
+    });
+    return BotConfig.fromJson(Map<String, dynamic>.from(res.data as Map));
+  }
+
   Future<BotLiveLog> getLiveLog({int limit = 80}) async {
     final res = await _api.dio.get('/api/bot/log', queryParameters: {'limit': limit});
     return BotLiveLog.fromJson(Map<String, dynamic>.from(res.data as Map));

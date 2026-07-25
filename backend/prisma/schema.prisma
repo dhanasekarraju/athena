@@ -115,17 +115,25 @@ model BotPosition {
 
 /// Singleton runtime config editable from the mobile Settings UI (id = "default").
 model BotConfig {
-  id                 String   @id @default("default")
-  autonomousEnabled  Boolean  @default(false)
-  paperTrading       Boolean  @default(true)
-  maxOrderInr        Float    @default(1000)
-  maxOpenExposureInr Float    @default(2000)
-  minConfidence      Float    @default(55)
-  symbols            String   @default("BTC,ETH")
-  slFraction         Float    @default(0.4)
-  tp1Fraction        Float    @default(0.5)
-  skipHighRisk       Boolean  @default(true)
-  updatedAt          DateTime @updatedAt
+  id                       String   @id @default("default")
+  autonomousEnabled        Boolean  @default(false)
+  paperTrading             Boolean  @default(true)
+  maxOrderInr              Float    @default(1000)
+  maxOpenExposureInr       Float    @default(2000)
+  minConfidence            Float    @default(55)
+  symbols                  String   @default("BTC,ETH")
+  slFraction               Float    @default(0.4)
+  tp1Fraction              Float    @default(0.5)
+  skipHighRisk             Boolean  @default(true)
+  /// Kill new entries when IST-day realized loss hits this INR floor. 0 = disabled.
+  dailyLossLimitInr        Float    @default(2000)
+  /// Kill after this many stop_loss exits in a row. 0 = disabled.
+  maxConsecutiveStopLosses Int      @default(3)
+  /// Max (ask-bid)/mid for entry. e.g. 0.08 = 8%.
+  maxSpreadPct             Float    @default(0.08)
+  /// Minimum open interest on selected option.
+  minOpenInterest          Float    @default(10)
+  updatedAt                DateTime @updatedAt
 }
 
 model WatchlistItem {
