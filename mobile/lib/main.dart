@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'app_router.dart';
 import 'core/theme/app_theme.dart';
-import 'services/notification_service.dart';
+import 'core/providers.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,7 +12,6 @@ Future<void> main() async {
   // google-services.json / GoogleService-Info.plist doesn't crash.
   try {
     await Firebase.initializeApp();
-    await NotificationService().init();
   } catch (_) {
     // Push notifications disabled until Firebase config files are added.
   }
@@ -20,17 +19,36 @@ Future<void> main() async {
   runApp(const ProviderScope(child: AthenaApp()));
 }
 
-class AthenaApp extends StatelessWidget {
+class AthenaApp extends ConsumerStatefulWidget {
   const AthenaApp({super.key});
+
+  @override
+  ConsumerState<AthenaApp> createState() => _AthenaAppState();
+}
+
+class _AthenaAppState extends ConsumerState<AthenaApp> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final notif = ref.read(notificationServiceProvider);
+        await notif.init();
+        final loggedIn = await ref.read(authServiceProvider).isLoggedIn();
+        if (loggedIn) {
+          await notif.registerWithBackend(ref.read(apiClientProvider));
+        }
+      } catch (_) {}
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
       title: 'ATHENA',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark(),
-      darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.dark,
+      theme: AppTheme.light(),
+      themeMode: ThemeMode.light,
       routerConfig: appRouter,
     );
   }

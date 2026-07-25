@@ -28,6 +28,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     });
     try {
       await ref.read(authServiceProvider).register(_emailController.text.trim(), _passwordController.text);
+      try {
+        await ref.read(notificationServiceProvider).registerWithBackend(ref.read(apiClientProvider));
+      } catch (_) {}
       if (mounted) context.go('/dashboard');
     } catch (e) {
       setState(() => _error = 'Registration failed. Try a different email.');

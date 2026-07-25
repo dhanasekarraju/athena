@@ -14,9 +14,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  refreshTokens RefreshToken[]
-  trades        Trade[]
-  watchlist     WatchlistItem[]
+  refreshTokens    RefreshToken[]
+  trades           Trade[]
+  watchlist        WatchlistItem[]
+  deviceTokens     DeviceToken[]
+  coraiserMessages CoraiserMessage[]
 }
 
 model RefreshToken {
@@ -147,4 +149,30 @@ model NewsItem {
   createdAt     DateTime @default(now())
 
   @@index([publishedAt])
+}
+
+/// FCM tokens for buy/sell push alerts.
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String
+  platform  String   @default("android") // android | ios
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@unique([userId, token])
+  @@index([userId])
+}
+
+/// In-app Co-raiser chat history (last N kept per user).
+model CoraiserMessage {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String // user | assistant
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

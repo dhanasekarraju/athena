@@ -6,6 +6,11 @@ class BotService {
   final ApiClient _api;
   BotService(this._api);
 
+  Future<Map<String, dynamic>> getStatus() async {
+    final res = await _api.dio.get('/api/bot/status');
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
   Future<BotConfig> getConfig() async {
     final res = await _api.dio.get('/api/bot/config');
     return BotConfig.fromJson(Map<String, dynamic>.from(res.data as Map));

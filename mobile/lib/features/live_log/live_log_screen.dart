@@ -141,7 +141,7 @@ class _LiveLogScreenState extends ConsumerState<LiveLogScreen> {
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: AppColors.surface,
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(4),
                             border: Border.all(color: AppColors.border),
                           ),
                           child: const Text(
@@ -163,7 +163,7 @@ class _LiveLogScreenState extends ConsumerState<LiveLogScreen> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: AppColors.border),
       ),
       child: Column(
@@ -194,7 +194,7 @@ class _LiveLogScreenState extends ConsumerState<LiveLogScreen> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: AppColors.border),
       ),
       child: Text(
@@ -211,7 +211,7 @@ class _LiveLogScreenState extends ConsumerState<LiveLogScreen> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: AppColors.border),
       ),
       child: Row(

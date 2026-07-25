@@ -13,12 +13,12 @@ class SignalCard extends StatelessWidget {
     final color = directionColor(signal.direction);
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(4),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: AppColors.surface,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(4),
           border: Border.all(color: AppColors.border),
         ),
         child: Column(

@@ -24,6 +24,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
     try {
       await ref.read(authServiceProvider).login(_emailController.text.trim(), _passwordController.text);
+      try {
+        await ref.read(notificationServiceProvider).registerWithBackend(ref.read(apiClientProvider));
+      } catch (_) {}
       if (mounted) context.go('/dashboard');
     } catch (e) {
       setState(() => _error = 'Login failed. Check your credentials.');

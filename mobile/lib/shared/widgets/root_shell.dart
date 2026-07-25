@@ -8,12 +8,11 @@ class RootShell extends StatelessWidget {
   const RootShell({super.key, required this.child, required this.location});
 
   static const _tabs = [
-    ('/dashboard', Icons.dashboard_outlined, Icons.dashboard, 'Home'),
-    ('/charts', Icons.show_chart, Icons.show_chart, 'Charts'),
-    ('/live-log', Icons.history_outlined, Icons.history, 'Live Log'),
-    ('/news', Icons.newspaper_outlined, Icons.newspaper, 'News'),
-    ('/portfolio', Icons.pie_chart_outline, Icons.pie_chart, 'Portfolio'),
-    ('/settings', Icons.settings_outlined, Icons.settings, 'Settings'),
+    ('/dashboard', Icons.home_outlined, Icons.home, 'Home'),
+    ('/live-log', Icons.menu_book_outlined, Icons.menu_book, 'Live'),
+    ('/coraiser', Icons.forum_outlined, Icons.forum, 'Coach'),
+    ('/portfolio', Icons.account_balance_outlined, Icons.account_balance, 'Book'),
+    ('/settings', Icons.tune_outlined, Icons.tune, 'Settings'),
   ];
 
   int _currentIndex() {
@@ -26,16 +25,22 @@ class RootShell extends StatelessWidget {
     final currentIndex = _currentIndex();
     return Scaffold(
       body: child,
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: currentIndex,
-        onTap: (i) => context.go(_tabs[i].$1),
-        items: _tabs
-            .map((t) => BottomNavigationBarItem(
-                  icon: Icon(t.$2),
-                  activeIcon: Icon(t.$3, color: AppColors.primary),
-                  label: t.$4,
-                ))
-            .toList(),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: AppColors.border)),
+          color: AppColors.surface,
+        ),
+        child: BottomNavigationBar(
+          currentIndex: currentIndex,
+          onTap: (i) => context.go(_tabs[i].$1),
+          items: _tabs
+              .map((t) => BottomNavigationBarItem(
+                    icon: Icon(t.$2),
+                    activeIcon: Icon(t.$3, color: AppColors.ink),
+                    label: t.$4,
+                  ))
+              .toList(),
+        ),
       ),
     );
   }

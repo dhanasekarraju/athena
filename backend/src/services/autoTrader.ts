@@ -10,6 +10,7 @@ import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
 import { buildEntryLevels, decideLongExit, isOneMinuteTimeframe, shouldQuickFailExit } from "./exitLogic.js";
 import { getTrendVerdict, shouldMomentumExit, verdictAllows } from "./trendJudge.js";
+import { notifyBuy, notifySell } from "./pushService.js";
 
 function defaultContractValue(symbol: string): number {
   const u = symbol.toUpperCase();
@@ -632,6 +633,15 @@ export class AutoTrader {
         },
       },
     );
+    notifyBuy(this.prisma, this.log, {
+      paper,
+      product: selected.productSymbol,
+      direction: signal.direction,
+      size,
+      premium: fillPremium,
+      confidence: signal.confidence,
+      timeframe: signal.timeframe,
+    });
   }
 
   async monitorOpenPositions(): Promise<void> {
@@ -993,6 +1003,14 @@ export class AutoTrader {
           },
         },
       );
+      notifySell(this.prisma, this.log, {
+        paper: pos.paper,
+        product: pos.productSymbol,
+        reason,
+        mark,
+        pnl,
+        partial: true,
+      });
       return { ok: true, pnl, mark, paper: pos.paper };
     }
 
@@ -1028,6 +1046,13 @@ export class AutoTrader {
         details: { productSymbol: pos.productSymbol, reason, mark, pnl, paper: pos.paper },
       },
     );
+    notifySell(this.prisma, this.log, {
+      paper: pos.paper,
+      product: pos.productSymbol,
+      reason,
+      mark,
+      pnl,
+    });
 
     return { ok: true, pnl, mark, paper: pos.paper };
   }

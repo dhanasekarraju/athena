@@ -26,19 +26,26 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    final theme = Theme.of(context);
+    return Scaffold(
       backgroundColor: AppColors.background,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.auto_graph_rounded, size: 72, color: AppColors.primary),
-            SizedBox(height: 16),
-            Text('ATHENA',
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, letterSpacing: 4)),
-            SizedBox(height: 6),
-            Text('AI Crypto Signal Intelligence',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+            Text(
+              'ATHENA',
+              style: theme.textTheme.displaySmall?.copyWith(
+                fontFamily: AppTypography.displayFamily,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 2,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Raised with care · Delta options',
+              style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
+            ),
           ],
         ),
       ),

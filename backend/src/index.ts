@@ -11,6 +11,8 @@ import signalRoutes from "./routes/signals.js";
 import newsRoutes from "./routes/news.js";
 import portfolioRoutes from "./routes/portfolio.js";
 import botRoutes from "./routes/bot.js";
+import devicesRoutes from "./routes/devices.js";
+import coraiserRoutes from "./routes/coraiser.js";
 import liveWebsocket from "./websocket/live.js";
 import { getAutoTrader } from "./services/autoTrader.js";
 import { getSignalPoller } from "./services/signalPoller.js";
@@ -36,6 +38,8 @@ async function main() {
   await app.register(newsRoutes);
   await app.register(portfolioRoutes);
   await app.register(botRoutes);
+  await app.register(devicesRoutes);
+  await app.register(coraiserRoutes);
   await app.register(liveWebsocket);
 
   app.setErrorHandler((error, _request, reply) => {

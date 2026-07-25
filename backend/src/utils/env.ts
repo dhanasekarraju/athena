@@ -41,6 +41,11 @@ const EnvSchema = z.object({
   USD_INR_RATE: z.coerce.number().default(85),
   /** Virtual cash for paper trading equity display */
   PAPER_BALANCE_INR: z.coerce.number().default(10000),
+  /**
+   * Firebase Admin service account JSON (stringified) for FCM buy/sell pushes.
+   * Empty = push disabled (fail-soft).
+   */
+  FIREBASE_SERVICE_ACCOUNT_JSON: z.string().default(""),
 });
 
 export const env = EnvSchema.parse(process.env);

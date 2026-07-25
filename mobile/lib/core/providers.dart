@@ -5,6 +5,8 @@ import '../services/auth_service.dart';
 import '../services/signal_service.dart';
 import '../services/live_signal_service.dart';
 import '../services/bot_service.dart';
+import '../services/coraiser_service.dart';
+import '../services/notification_service.dart';
 import '../models/signal_model.dart';
 import '../models/bot_config.dart';
 import '../core/constants/app_constants.dart';
@@ -21,8 +23,16 @@ final signalServiceProvider = Provider((ref) => SignalService(ref.watch(apiClien
 
 final botServiceProvider = Provider((ref) => BotService(ref.watch(apiClientProvider)));
 
+final coraiserServiceProvider = Provider((ref) => CoraiserService(ref.watch(apiClientProvider)));
+
+final notificationServiceProvider = Provider((ref) => NotificationService(api: ref.watch(apiClientProvider)));
+
 final botConfigProvider = FutureProvider.autoDispose<BotConfig>((ref) async {
   return ref.watch(botServiceProvider).getConfig();
+});
+
+final botStatusProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  return ref.watch(botServiceProvider).getStatus();
 });
 
 final liveSignalServiceProvider = Provider((ref) {
