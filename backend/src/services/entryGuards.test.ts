@@ -28,10 +28,9 @@ describe("evaluateEntryGuards", () => {
     skipHighRisk: false,
   };
 
-  it("blocks 1m timeframe", () => {
+  it("allows 1m timeframe (probe + quick-fail path)", () => {
     const r = evaluateEntryGuards({ ...base, timeframe: "1m", confidence: 80 });
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/timeframe/i);
+    expect(r.ok).toBe(true);
   });
 
   it("allows typical 32 / High risk when Settings allow it", () => {

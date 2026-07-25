@@ -300,6 +300,49 @@ export function decideSignalSell(input: {
   return { reason: null, fraction: 0, detail: "hold through signal" };
 }
 
+/** True for 1-minute AI timeframe labels. */
+export function isOneMinuteTimeframe(tf?: string | null): boolean {
+  const t = (tf ?? "").toLowerCase().trim();
+  return t === "1m" || t === "1min" || t === "1";
+}
+
+/**
+ * 1m probe rule: if premium has not raised (exit ≤ entry) after grace, cut.
+ * Small early loss preferred over waiting for full SL — fees are similar either way.
+ * Only applies to positions entered on 1m; 5m/15m keep SL / trail / mom flip.
+ */
+export const QUICK_FAIL_GRACE_MS = 5 * 60 * 1000;
+
+export function shouldQuickFailExit(input: {
+  timeframe?: string | null;
+  openedAtMs: number;
+  entryPremium: number;
+  exitPx: number;
+  nowMs?: number;
+}): { exit: boolean; why: string } {
+  if (!isOneMinuteTimeframe(input.timeframe)) {
+    return { exit: false, why: "not 1m probe" };
+  }
+  const now = input.nowMs ?? Date.now();
+  const ageMs = now - input.openedAtMs;
+  if (ageMs < QUICK_FAIL_GRACE_MS) {
+    const left = Math.ceil((QUICK_FAIL_GRACE_MS - ageMs) / 60000);
+    return { exit: false, why: `probe grace ${left}m left` };
+  }
+  if (input.exitPx <= 0 || input.entryPremium <= 0) {
+    return { exit: false, why: "bad price" };
+  }
+  if (input.exitPx > input.entryPremium) {
+    const pct = ((input.exitPx / input.entryPremium - 1) * 100).toFixed(1);
+    return { exit: false, why: `raised +${pct}% — keep` };
+  }
+  const pct = ((input.exitPx / input.entryPremium - 1) * 100).toFixed(1);
+  return {
+    exit: true,
+    why: `1m probe flat/red after 5m (${pct}%)`,
+  };
+}
+
 /** Contracts to sell from open size and fraction (Delta sizes are whole contracts). */
 export function contractsToSell(openSize: number, fraction: number): number {
   if (openSize <= 0 || fraction <= 0) return 0;

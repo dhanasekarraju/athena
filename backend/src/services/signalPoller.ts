@@ -50,10 +50,10 @@ interface AiSignal {
 
 /**
  * Timeframes the server polls so the bot does not depend on the mobile app.
- * 1m is deliberately excluded: with a 30s loop it floods the bot with noise
- * (instant HOLD trims / flip churn) and drains capital in fees.
+ * 1m = fast probe entries (must raise within ~5m or quick_fail).
+ * 5m/15m = slower confirmation / continuation.
  */
-const POLL_TIMEFRAMES = ["5m", "15m"] as const;
+const POLL_TIMEFRAMES = ["1m", "5m", "15m"] as const;
 
 /**
  * Server-side signal loop: fetch AI signals and feed AutoTrader continuously.

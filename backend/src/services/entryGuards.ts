@@ -32,8 +32,12 @@ export interface EntryGuardResult {
   details?: Record<string, unknown>;
 }
 
-/** Skip ultra-noisy 1m signals for auto-entry. */
-export const BLOCKED_ENTRY_TIMEFRAMES = new Set(["1m", "1min", "1"]);
+/**
+ * 1m is allowed as a fast probe entry. Gemini still gates direction; if the
+ * premium does not raise within ~5m, AutoTrader cuts via quick_fail.
+ * @deprecated empty — kept so older imports do not break.
+ */
+export const BLOCKED_ENTRY_TIMEFRAMES = new Set<string>();
 
 /**
  * Wait after a stop-loss before re-entering the *same direction* on that coin.
@@ -68,17 +72,7 @@ export function requiredConfidenceForSymbol(_symbol: string, minConfidence: numb
 export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
   const sym = input.symbol.toUpperCase();
   const required = requiredConfidenceForSymbol(sym, input.minConfidence);
-  const tf = (input.timeframe ?? "").toLowerCase().trim();
   const now = input.nowMs ?? Date.now();
-
-  if (tf && BLOCKED_ENTRY_TIMEFRAMES.has(tf)) {
-    return {
-      ok: false,
-      reason: `timeframe ${input.timeframe} blocked for auto-entry`,
-      requiredConfidence: required,
-      details: { timeframe: input.timeframe },
-    };
-  }
 
   if (input.confidence < required) {
     return {

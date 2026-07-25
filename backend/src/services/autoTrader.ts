@@ -8,8 +8,8 @@ import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
 import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_LOSS_MS, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
 import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
+import { buildEntryLevels, decideLongExit, isOneMinuteTimeframe, shouldQuickFailExit } from "./exitLogic.js";
 import { getTrendVerdict, shouldMomentumExit, verdictAllows } from "./trendJudge.js";
-import { buildEntryLevels, decideLongExit } from "./exitLogic.js";
 
 function defaultContractValue(symbol: string): number {
   const u = symbol.toUpperCase();
@@ -381,7 +381,8 @@ export class AutoTrader {
 
     // Gemini trend judge: entry must agree with the higher-level trend; chop blocks.
     // After an opposite-side stop-loss, require 1m+5m aligned (flip on clear reverse).
-    // Fails open if the judge is unavailable.
+    // 1m probe entries always require 1m+5m + Gemini available (fail-closed — noisy TF).
+    // Other TFs fail-open if the judge is unavailable.
     const oppositeDir = signal.direction === "BUY_CALL" ? "BUY_PUT" : "BUY_CALL";
     const recentOppositeStop = await this.prisma.botPosition.findFirst({
       where: {
@@ -396,6 +397,7 @@ export class AutoTrader {
       select: { closedAt: true, direction: true },
     });
     const flipAfterSl = recentOppositeStop != null;
+    const is1mProbe = isOneMinuteTimeframe(signal.timeframe);
 
     const verdict = await getTrendVerdict(sym, this.log);
     if (verdict.source === "gemini") {
@@ -408,8 +410,16 @@ export class AutoTrader {
         score: verdict.strength,
       });
     }
+    if (is1mProbe && verdict.source !== "gemini") {
+      this.pushActivity("skip", `${sym} 1m probe skipped — Gemini unavailable`, {
+        symbol: sym,
+        details: { timeframe: signal.timeframe, confidence: signal.confidence },
+      });
+      this.log.info({ symbol: sym, timeframe: signal.timeframe }, "Skip 1m entry: trend judge unavailable");
+      return;
+    }
     const trendGate = verdictAllows(signal.direction as "BUY_CALL" | "BUY_PUT", verdict, {
-      requireCoreFrames: flipAfterSl,
+      requireCoreFrames: flipAfterSl || is1mProbe,
     });
     if (!trendGate.ok) {
       this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${trendGate.why}`, {
@@ -420,11 +430,12 @@ export class AutoTrader {
           reason: verdict.reason,
           frames: verdict.frames,
           flipAfterSl,
+          is1mProbe,
           confidence: signal.confidence,
         },
       });
       this.log.info(
-        { symbol: sym, direction: signal.direction, verdict, flipAfterSl },
+        { symbol: sym, direction: signal.direction, verdict, flipAfterSl, is1mProbe },
         "Skip auto entry: trend judge",
       );
       return;
@@ -753,6 +764,7 @@ export class AutoTrader {
     const snap = (pos.signalSnapshot ?? {}) as {
       peakExitPx?: number;
       planned?: { tp1Fraction?: number };
+      timeframe?: string;
     };
     const settingsTp =
       pos.entryPremium * (1 + (snap.planned?.tp1Fraction ?? cfg.tp1Fraction));
@@ -780,9 +792,29 @@ export class AutoTrader {
       return;
     }
 
+    // 1m probe: no raise within 5m → cut (small loss OK; fees same as waiting for deeper SL).
+    const exitPx = decision.exitPx > 0 ? decision.exitPx : quotes.mark || quotes.bid;
+    const quick = shouldQuickFailExit({
+      timeframe: snap.timeframe,
+      openedAtMs: pos.openedAt.getTime(),
+      entryPremium: pos.entryPremium,
+      exitPx,
+    });
+    if (quick.exit) {
+      this.pushActivity("exit", `Quick-fail ${pos.productSymbol} — ${quick.why}`, {
+        symbol: pos.underlying,
+        details: { reason: "quick_fail", exitPx, timeframe: snap.timeframe },
+      });
+      this.log.info(
+        { id: pos.id, product: pos.productSymbol, why: quick.why, exitPx },
+        "AutoTrader 1m quick-fail exit",
+      );
+      await this.executeExit(pos, exitPx, "quick_fail");
+      return;
+    }
+
     // Adverse 1m+5m (Gemini): cut small instead of waiting for late AI flip / full SL.
     // Fees are the same at −₹50 or −₹200 — save the extra loss when momentum flipped.
-    const exitPx = decision.exitPx > 0 ? decision.exitPx : quotes.mark || quotes.bid;
     const lastMom = this.momentumExitCheckedAt.get(pos.id) ?? 0;
     if (Date.now() - lastMom >= 45_000) {
       this.momentumExitCheckedAt.set(pos.id, Date.now());

@@ -7,6 +7,7 @@ import {
   longExitPrice,
   longSlProbe,
   longTpProbe,
+  shouldQuickFailExit,
 } from "./exitLogic.js";
 
 describe("exit quotes", () => {
@@ -189,5 +190,56 @@ describe("contractsToSell", () => {
     expect(contractsToSell(12, 1)).toBe(12);
     expect(contractsToSell(1, 0.33)).toBe(0);
     expect(contractsToSell(1, 0.5)).toBe(1);
+  });
+});
+
+describe("shouldQuickFailExit", () => {
+  const t0 = 1_700_000_000_000;
+
+  it("ignores non-1m positions", () => {
+    const r = shouldQuickFailExit({
+      timeframe: "5m",
+      openedAtMs: t0,
+      entryPremium: 100,
+      exitPx: 90,
+      nowMs: t0 + 10 * 60_000,
+    });
+    expect(r.exit).toBe(false);
+  });
+
+  it("waits for 5m grace on 1m probes", () => {
+    const r = shouldQuickFailExit({
+      timeframe: "1m",
+      openedAtMs: t0,
+      entryPremium: 100,
+      exitPx: 90,
+      nowMs: t0 + 4 * 60_000,
+    });
+    expect(r.exit).toBe(false);
+    expect(r.why).toMatch(/grace/i);
+  });
+
+  it("exits flat/red 1m probe after 5m", () => {
+    const r = shouldQuickFailExit({
+      timeframe: "1m",
+      openedAtMs: t0,
+      entryPremium: 100,
+      exitPx: 95,
+      nowMs: t0 + 5 * 60_000,
+    });
+    expect(r.exit).toBe(true);
+    expect(r.why).toMatch(/flat\/red/i);
+  });
+
+  it("keeps 1m probe once it has raised", () => {
+    const r = shouldQuickFailExit({
+      timeframe: "1m",
+      openedAtMs: t0,
+      entryPremium: 100,
+      exitPx: 101,
+      nowMs: t0 + 6 * 60_000,
+    });
+    expect(r.exit).toBe(false);
+    expect(r.why).toMatch(/raised/i);
   });
 });
