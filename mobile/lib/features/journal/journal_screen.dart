@@ -26,7 +26,7 @@ class JournalScreen extends ConsumerWidget {
       body: tradesAsync.when(
         data: (trades) {
           if (trades.isEmpty) {
-            return const Center(
+            return Center(
               child: Text('No trades logged yet.\nManually record trades you execute on your exchange.',
                   textAlign: TextAlign.center, style: TextStyle(color: AppColors.textSecondary)),
             );
@@ -55,13 +55,13 @@ class JournalScreen extends ConsumerWidget {
                             style: const TextStyle(fontWeight: FontWeight.w700)),
                         const SizedBox(height: 4),
                         Text('Entry \$${t.entryPrice.toStringAsFixed(2)} · Qty ${t.quantity}',
-                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                            style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                       ],
                     ),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        Text(t.status, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                        Text(t.status, style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                         if (t.pnl != null)
                           Text('\$${t.pnl!.toStringAsFixed(2)}',
                               style: TextStyle(fontWeight: FontWeight.w700, color: pnlColor)),
@@ -100,7 +100,7 @@ class JournalScreen extends ConsumerWidget {
           children: [
             const Text('Log Manual Trade', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
-            const Text('Record a trade you already executed on your exchange. ATHENA does not place orders.',
+            Text('Record a trade you already executed on your exchange. ATHENA does not place orders.',
                 style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
             const SizedBox(height: 16),
             TextField(controller: symbolCtrl, decoration: const InputDecoration(hintText: 'Symbol (e.g. BTC)')),

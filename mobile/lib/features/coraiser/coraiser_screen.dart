@@ -122,7 +122,7 @@ class _CoraiserScreenState extends ConsumerState<CoraiserScreen> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Text(_error!, style: const TextStyle(color: AppColors.bearish, fontSize: 13)),
+              child: Text(_error!, style: TextStyle(color: AppColors.bearish, fontSize: 13)),
             ),
           Expanded(
             child: _loading
@@ -144,7 +144,7 @@ class _CoraiserScreenState extends ConsumerState<CoraiserScreen> {
                         itemCount: _messages.length + (_sending ? 1 : 0),
                         itemBuilder: (context, i) {
                           if (_sending && i == _messages.length) {
-                            return const Align(
+                            return Align(
                               alignment: Alignment.centerLeft,
                               child: Padding(
                                 padding: EdgeInsets.symmetric(vertical: 8),

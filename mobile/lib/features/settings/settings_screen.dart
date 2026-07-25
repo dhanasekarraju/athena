@@ -130,7 +130,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         error: (err, _) => ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text(
+            Text(
               'Could not load bot config. Log in and ensure the backend is running.',
               style: TextStyle(color: AppColors.textSecondary),
             ),
@@ -152,7 +152,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const Text('Appearance',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 8),
-                    const Text(
+                    Text(
                       'Classical Athena — light paper or dark ink.',
                       style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     ),
@@ -184,7 +184,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       draft.deltaConfigured
                           ? 'Delta API keys detected on server.'
                           : 'Delta API keys not set on server — only paper mode works.',
-                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
@@ -227,7 +227,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     const Text('Safety limits', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 8),
-                    const Text(
+                    Text(
                       'Daily loss (IST) trips kill switch. Consecutive SLs too. Spread/OI block thin books.',
                       style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     ),
@@ -298,7 +298,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       'SL & TP run independently every ~5s on the live bid. '
                       'Fresh signals also decide how much to sell: flip → full/partial, HOLD → scale out, fade → trim. '
                       'Stop −${(draft.slFraction * 100).toStringAsFixed(0)}%  ·  Take +${(draft.tp1Fraction * 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                      style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                     ),
                     Slider(
                       value: draft.slFraction.clamp(0.1, 0.8),
@@ -350,9 +350,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 16),
               if (_error != null)
-                Text(_error!, style: const TextStyle(color: AppColors.bearish, fontSize: 13)),
+                Text(_error!, style: TextStyle(color: AppColors.bearish, fontSize: 13)),
               if (_savedMsg != null)
-                Text(_savedMsg!, style: const TextStyle(color: AppColors.bullish, fontSize: 13)),
+                Text(_savedMsg!, style: TextStyle(color: AppColors.bullish, fontSize: 13)),
               const SizedBox(height: 8),
               ElevatedButton(
                 onPressed: _saving ? null : _save,
@@ -377,7 +377,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ],
               ),
               const SizedBox(height: 20),
-              const Text(
+              Text(
                 'Tips: keep Paper ON until a few dry runs look correct. Turn Auto ON only with ₹ you can lose. '
                 'Kill switch blocks new buys; existing positions still exit on SL/TP.',
                 style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
@@ -422,8 +422,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _signOutTile(BuildContext context) {
     return ListTile(
-      leading: const Icon(Icons.logout, color: AppColors.bearish),
-      title: const Text('Sign Out', style: TextStyle(color: AppColors.bearish)),
+      leading: Icon(Icons.logout, color: AppColors.bearish),
+      title: Text('Sign Out', style: TextStyle(color: AppColors.bearish)),
       onTap: () async {
         await ref.read(authServiceProvider).logout();
         if (context.mounted) context.go('/login');

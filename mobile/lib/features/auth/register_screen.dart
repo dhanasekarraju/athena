@@ -53,7 +53,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               const Text('Create account',
                   style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
               const SizedBox(height: 6),
-              const Text('Start receiving explainable AI signals',
+              Text('Start receiving explainable AI signals',
                   style: TextStyle(color: AppColors.textSecondary)),
               const SizedBox(height: 32),
               TextField(
@@ -69,7 +69,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
-                Text(_error!, style: const TextStyle(color: AppColors.bearish, fontSize: 13)),
+                Text(_error!, style: TextStyle(color: AppColors.bearish, fontSize: 13)),
               ],
               const SizedBox(height: 24),
               ElevatedButton(

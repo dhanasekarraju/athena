@@ -216,7 +216,7 @@ class DashboardScreen extends ConsumerWidget {
                 child: Center(child: CircularProgressIndicator()),
               ),
               error: (err, _) => Text('Could not load signal: $err',
-                  style: const TextStyle(color: AppColors.bearish)),
+                  style: TextStyle(color: AppColors.bearish)),
             ),
             const SizedBox(height: 16),
             TextButton(

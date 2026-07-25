@@ -49,7 +49,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               const Text('Welcome back',
                   style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
               const SizedBox(height: 6),
-              const Text('Sign in to view live AI signals',
+              Text('Sign in to view live AI signals',
                   style: TextStyle(color: AppColors.textSecondary)),
               const SizedBox(height: 32),
               TextField(
@@ -65,7 +65,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
-                Text(_error!, style: const TextStyle(color: AppColors.bearish, fontSize: 13)),
+                Text(_error!, style: TextStyle(color: AppColors.bearish, fontSize: 13)),
               ],
               const SizedBox(height: 24),
               ElevatedButton(

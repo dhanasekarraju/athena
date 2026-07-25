@@ -152,7 +152,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                   'Open tied ≈ ₹${(stats['openNotional'] as num?)?.toStringAsFixed(0) ?? '0'}'
                   ' · Equity ≈ ₹${(stats['equityInr'] as num?)?.toStringAsFixed(0) ?? '—'}'
                   ' · Paper ${stats['openPaper'] ?? 0} / Live ${stats['openLive'] ?? 0}',
-                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 20),
                 const Text('Open bot positions',
@@ -191,12 +191,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          Text(label, style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
           const SizedBox(height: 8),
           Text(value, style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: color)),
           if (subtitle != null) ...[
             const SizedBox(height: 6),
-            Text(subtitle, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+            Text(subtitle, style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
           ],
         ],
       ),
@@ -212,7 +212,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
-      child: Text(text, style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+      child: Text(text, style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
     );
   }
 
@@ -289,7 +289,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
               const SizedBox(height: 4),
               Text(
                 'SL ${sl.toStringAsFixed(2)} · TP ${tp.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
             ],
           ],
@@ -324,7 +324,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          Text(label, style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
           const SizedBox(height: 6),
           Text(value, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: color)),
         ],

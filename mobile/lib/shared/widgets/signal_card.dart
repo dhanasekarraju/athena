@@ -39,7 +39,7 @@ class SignalCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(signal.timeframe,
-                          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                     ),
                   ],
                 ),
@@ -70,7 +70,7 @@ class SignalCard extends StatelessWidget {
               const SizedBox(height: 10),
               Text(
                 signal.option!.shortLabel,
-                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
             ],
           ],
@@ -83,7 +83,7 @@ class SignalCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+        Text(label, style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
         const SizedBox(height: 2),
         Text(value, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: color)),
       ],

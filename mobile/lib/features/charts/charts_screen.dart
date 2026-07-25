@@ -75,7 +75,7 @@ class ChartsScreen extends ConsumerWidget {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      const Text(
+                      Text(
                         'Simplified price path: entry → current → target 1 → target 2. '
                         'For full OHLCV candlesticks, wire this widget to a candlestick chart library '
                         'backed by /api/market/prices historical candles.',

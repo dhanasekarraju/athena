@@ -20,7 +20,7 @@ class NewsScreen extends ConsumerWidget {
       body: newsAsync.when(
         data: (items) {
           if (items.isEmpty) {
-            return const Center(
+            return Center(
               child: Text('No news yet. Connect a news ingestion job to populate this feed.',
                   style: TextStyle(color: AppColors.textSecondary)),
             );
@@ -51,7 +51,7 @@ class NewsScreen extends ConsumerWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Text(item['source'] ?? '', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                        Text(item['source'] ?? '', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                         const Spacer(),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

@@ -110,7 +110,7 @@ class _LiveLogScreenState extends ConsumerState<LiveLogScreen> {
                     child: Text(
                       'Could not load bot log.\n$_error',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: AppColors.textSecondary),
+                      style: TextStyle(color: AppColors.textSecondary),
                     ),
                   ),
                 )
@@ -131,7 +131,7 @@ class _LiveLogScreenState extends ConsumerState<LiveLogScreen> {
                       const Text('Activity',
                           style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                       const SizedBox(height: 6),
-                      const Text(
+                      Text(
                         'Skips, paper/live fills, and exits. Auto-refreshes every 4s.',
                         style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                       ),
@@ -144,7 +144,7 @@ class _LiveLogScreenState extends ConsumerState<LiveLogScreen> {
                             borderRadius: BorderRadius.circular(4),
                             border: Border.all(color: AppColors.border),
                           ),
-                          child: const Text(
+                          child: Text(
                             'No events yet. Pull a BTC/ETH signal with Auto ON to see skips or trades here.',
                             style: TextStyle(color: AppColors.textSecondary),
                           ),
@@ -181,7 +181,7 @@ class _LiveLogScreenState extends ConsumerState<LiveLogScreen> {
           const SizedBox(height: 4),
           Text(
             log.deltaConfigured ? 'Delta connected' : 'Delta keys missing',
-            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
         ],
       ),

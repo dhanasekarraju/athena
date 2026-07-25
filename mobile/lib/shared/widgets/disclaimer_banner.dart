@@ -16,7 +16,7 @@ class DisclaimerBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.hold.withOpacity(0.3)),
       ),
-      child: const Row(
+      child: Row(
         children: [
           Icon(Icons.info_outline, size: 16, color: AppColors.hold),
           SizedBox(width: 8),
