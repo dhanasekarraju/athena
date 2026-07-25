@@ -1073,7 +1073,9 @@ export class AutoTrader {
       snap.planned?.contractValue ??
       defaultContractValue(pos.productSymbol);
     const pnlUsd = (mark - pos.entryPremium) * sellSize * cv;
-    const pnl = pnlUsd * env.USD_INR_RATE;
+    // Same live FX path as tryEnter — circuit breaker sums this realizedPnl.
+    const fx = await getUsdInrRate(this.log);
+    const pnl = pnlUsd * fx.rate;
     const originalSize = snap.originalSize ?? pos.size;
     const soldFractionOfOriginal =
       (snap.signalExit?.soldFractionOfOriginal ?? 0) + sellSize / Math.max(1, originalSize);
