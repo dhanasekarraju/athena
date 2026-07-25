@@ -4,6 +4,7 @@
  */
 
 import type { TrendVerdict } from "./trendJudge.js";
+import { isTrendJudgeLive } from "./trendJudge.js";
 
 export interface RegimeGuardInput {
   direction: "BUY_CALL" | "BUY_PUT";
@@ -14,7 +15,7 @@ export interface RegimeGuardInput {
   markIv?: number | null;
   /** Reject buyer entries when IV is this rich (default 0.95). */
   maxMarkIv?: number;
-  /** Minimum Gemini trend strength (default 55). */
+  /** Minimum LLM trend strength when judge is live (default 55). */
   minTrendStrength?: number;
 }
 
@@ -32,7 +33,7 @@ export function evaluateRegimeGuard(input: RegimeGuardInput): RegimeGuardResult 
   const minStrength = input.minTrendStrength ?? 55;
   const maxIv = input.maxMarkIv ?? 0.95;
 
-  if (input.verdict.source === "gemini") {
+  if (isTrendJudgeLive(input.verdict.source)) {
     if (input.verdict.trend === "chop") {
       return {
         ok: false,

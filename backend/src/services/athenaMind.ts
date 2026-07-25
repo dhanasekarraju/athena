@@ -14,7 +14,7 @@ export const ATHENA_MIND = `
 - Polls AI on 1m, 5m, 15m. Live buys: **no 1m entries** (paper may still probe). Prefer 5m/15m.
 - Bar: minConfidence often ~48, skipHighRisk=true; daily live entry cap 3 (IST).
 - Size: premium outlay ≤ ~12% of equity (and maxOrderInr / wallet / exposure room).
-- Gemini trend judge: CALL needs up, PUT needs down; chop blocks. Strength ≥55; need 5m or 15m frame when Gemini frames exist.
+- Gemini trend judge (failover: OpenRouter free models): CALL needs up, PUT needs down; chop blocks. Strength ≥55; need 5m or 15m frame when LLM frames exist.
 - Regime: OI ≥ minOpenInterest; refuse mark IV > ~95% for buyers.
 - Cooldowns ~5m same-direction after close; stop-loss cooldown same-direction only.
 - Tired move: if direction age >30m need ≥3 AI reasons.
@@ -23,7 +23,7 @@ export const ATHENA_MIND = `
 ## Exits
 - Hard SL / TP1 / trail / protect breakeven from premium moves.
 - signal_flip when AI opposite (with grace). Soft flip: skip flip-exit while green/raised on **all** TFs — leave to trail/SL/TP.
-- momentum_flip when Gemini 1m+5m turns against open (grace ~3m, strength≥60; skip if already ≥+3% green).
+- momentum_flip when LLM 1m+5m turns against open (grace ~3m, strength≥60; skip if already ≥+3% green).
 - quick_fail: 1m probes (paper) flat/red after 5m are cut. "Raised" = bid OR mark OR peak ever above entry.
 
 ## What Co-raiser should do

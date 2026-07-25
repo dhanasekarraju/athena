@@ -68,6 +68,9 @@ services:
       USD_INR_RATE: ${USD_INR_RATE:-85}
       PAPER_BALANCE_INR: ${PAPER_BALANCE_INR:-10000}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_TREND_MODELS: ${OPENROUTER_TREND_MODELS:-nvidia/nemotron-3-nano-30b-a3b:free,openai/gpt-oss-20b:free,inclusionai/ling-3.0-flash:free,google/gemma-4-31b-it:free,openrouter/free}
+      OPENROUTER_CORAISER_MODEL: ${OPENROUTER_CORAISER_MODEL:-nvidia/nemotron-3-nano-30b-a3b:free,inclusionai/ling-3.0-flash:free,openrouter/free}
     ports:
       - "4000:4000"
     depends_on:

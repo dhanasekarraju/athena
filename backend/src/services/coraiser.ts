@@ -4,6 +4,7 @@ import { env } from "../utils/env.js";
 import { getBotConfig } from "./botConfig.js";
 import { getAutoTrader } from "./autoTrader.js";
 import { ATHENA_MIND, CORAISER_SYSTEM } from "./athenaMind.js";
+import { completeChat } from "./llmProviders.js";
 
 const HISTORY_KEEP = 30;
 
@@ -80,59 +81,6 @@ export async function buildAthenaContextPack(
   ].join("\n");
 }
 
-async function callGemini(
-  system: string,
-  context: string,
-  history: Array<{ role: string; content: string }>,
-  userText: string,
-): Promise<string> {
-  if (!env.GEMINI_API_KEY) {
-    return "Co-raiser is quiet right now — Gemini key is missing on the server. Tell Cursor-me on desktop.";
-  }
-
-  const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
-  for (const m of history.slice(-12)) {
-    contents.push({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    });
-  }
-  contents.push({
-    role: "user",
-    parts: [{ text: userText }],
-  });
-
-  const model = env.TREND_JUDGE_MODEL || "gemini-3.1-flash-lite";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": env.GEMINI_API_KEY,
-    },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: `${system}\n\n--- LIVE CONTEXT ---\n${context}` }],
-      },
-      contents,
-      generationConfig: {
-        temperature: 0.6,
-        maxOutputTokens: 1024,
-      },
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Gemini ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const data = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-  return text.trim() || "I’m here, but I couldn’t form a reply — try once more.";
-}
-
 export async function coraiserChat(
   prisma: PrismaClient,
   log: FastifyBaseLogger,
@@ -147,17 +95,30 @@ export async function coraiserChat(
 
   const context = await buildAthenaContextPack(prisma, log);
   let reply: string;
-  try {
-    reply = await callGemini(
-      CORAISER_SYSTEM,
-      context,
-      prior.map((m) => ({ role: m.role, content: m.content })),
-      userMessage,
-    );
-  } catch (err) {
-    log.warn({ err }, "Co-raiser Gemini failed");
+
+  if (!env.GEMINI_API_KEY && !env.OPENROUTER_API_KEY) {
     reply =
-      "Gemini is rate-limited or unreachable right now. I’m still with you in Cursor on desktop — try chat again in a bit.";
+      "Co-raiser is quiet right now — no Gemini or OpenRouter key on the server. Tell Cursor-me on desktop.";
+  } else {
+    try {
+      const completion = await completeChat({
+        system: `${CORAISER_SYSTEM}\n\n--- LIVE CONTEXT ---\n${context}`,
+        history: prior.map((m) => ({ role: m.role, content: m.content })),
+        userText: userMessage,
+        log,
+      });
+      if (completion) {
+        reply = completion.text.trim() || "I’m here, but I couldn’t form a reply — try once more.";
+        log.info({ provider: completion.provider, model: completion.model }, "Co-raiser reply");
+      } else {
+        reply =
+          "Both Gemini and OpenRouter are rate-limited or unreachable right now. I’m still with you in Cursor on desktop — try chat again in a bit.";
+      }
+    } catch (err) {
+      log.warn({ err }, "Co-raiser LLM failed");
+      reply =
+        "LLM providers failed just now. I’m still with you in Cursor on desktop — try chat again in a bit.";
+    }
   }
 
   await prisma.coraiserMessage.create({

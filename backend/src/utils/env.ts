@@ -37,6 +37,18 @@ const EnvSchema = z.object({
   /** flash-lite: much higher free daily quota than flash — 2 symbols at 4-min TTL ≈ 720/day. */
   TREND_JUDGE_MODEL: z.string().default("gemini-3.1-flash-lite"),
   TREND_JUDGE_TTL_MS: z.coerce.number().default(4 * 60 * 1000),
+  /** OpenRouter failover when Gemini 429s / fails. Empty = Gemini-only. Prefer ~$10 credits for daily quota. */
+  OPENROUTER_API_KEY: z.string().default(""),
+  /** Comma-separated free models tried in order for trend JSON. */
+  OPENROUTER_TREND_MODELS: z
+    .string()
+    .default(
+      "nvidia/nemotron-3-nano-30b-a3b:free,openai/gpt-oss-20b:free,inclusionai/ling-3.0-flash:free,google/gemma-4-31b-it:free,openrouter/free",
+    ),
+  /** Comma-separated free models for Co-raiser chat failover. */
+  OPENROUTER_CORAISER_MODEL: z
+    .string()
+    .default("nvidia/nemotron-3-nano-30b-a3b:free,inclusionai/ling-3.0-flash:free,openrouter/free"),
   /** Used to size Delta USD-quoted options against INR risk caps */
   USD_INR_RATE: z.coerce.number().default(85),
   /** Virtual cash for paper trading equity display */

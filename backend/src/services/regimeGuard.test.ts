@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { evaluateRegimeGuard } from "./regimeGuard.js";
-import type { TrendVerdict } from "./trendJudge.js";
+
+process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
+process.env.JWT_SECRET ??= "test-secret-test-secret";
+process.env.JWT_REFRESH_SECRET ??= "test-secret-test-secret";
+
+const { evaluateRegimeGuard } = await import("./regimeGuard.js");
+type TrendVerdict = import("./trendJudge.js").TrendVerdict;
 
 const up: TrendVerdict = {
   trend: "up",
@@ -54,5 +59,17 @@ describe("evaluateRegimeGuard", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/OI/i);
+  });
+
+  it("applies structure rules for OpenRouter verdicts too", () => {
+    const r = evaluateRegimeGuard({
+      direction: "BUY_CALL",
+      verdict: { ...up, source: "openrouter", trend: "chop" },
+      openInterest: 200,
+      minOpenInterest: 50,
+      markIv: 0.55,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/chop/i);
   });
 });

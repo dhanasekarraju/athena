@@ -9,7 +9,7 @@ import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_LOSS_MS, STOP_LOSS_COOLDOW
 import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
 import { buildEntryLevels, decideLongExit, isOneMinuteTimeframe, probeHasRaised, shouldQuickFailExit } from "./exitLogic.js";
-import { getTrendVerdict, shouldMomentumExit, verdictAllows } from "./trendJudge.js";
+import { getTrendVerdict, shouldMomentumExit, verdictAllows, isTrendJudgeLive } from "./trendJudge.js";
 import { notifyBuy, notifySell, notifyTrade } from "./pushService.js";
 import { extractFilledSize, reconcileEntryFill } from "./orderFill.js";
 import { evaluateLiquidityGuard } from "./liquidityGuard.js";
@@ -481,18 +481,18 @@ export class AutoTrader {
     const is1mProbe = isOneMinuteTimeframe(signal.timeframe);
 
     const verdict = await getTrendVerdict(sym, this.log);
-    if (verdict.source === "gemini") {
+    if (isTrendJudgeLive(verdict.source)) {
       void publishBotFeed(this.prisma, this.log, {
         key: `trend:${sym}:${verdict.trend}`,
         minIntervalMs: env.TREND_JUDGE_TTL_MS,
-        title: `Gemini on ${sym}: ${verdict.trend.toUpperCase()} (${verdict.strength}) — ${verdict.reason}`,
-        source: "Athena • Gemini",
+        title: `Trend (${verdict.source}) on ${sym}: ${verdict.trend.toUpperCase()} (${verdict.strength}) — ${verdict.reason}`,
+        source: verdict.source === "openrouter" ? "Athena • OpenRouter" : "Athena • Gemini",
         sentiment: verdict.trend === "up" ? "Bullish" : verdict.trend === "down" ? "Bearish" : "Neutral",
         score: verdict.strength,
       });
     }
-    if (is1mProbe && verdict.source !== "gemini") {
-      this.pushActivity("skip", `${sym} 1m probe skipped — Gemini unavailable`, {
+    if (is1mProbe && !isTrendJudgeLive(verdict.source)) {
+      this.pushActivity("skip", `${sym} 1m probe skipped — trend judge unavailable`, {
         symbol: sym,
         details: { timeframe: signal.timeframe, confidence: signal.confidence },
       });

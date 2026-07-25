@@ -1,27 +1,36 @@
 import type { FastifyBaseLogger } from "fastify";
 import { env } from "../utils/env.js";
+import { completeJson, type LlmProvider } from "./llmProviders.js";
 
 /**
- * Gemini-based trend judge.
+ * Multi-provider trend judge (Gemini → OpenRouter free models).
  *
  * Rule-based signals can't tell a trend from chop — that caused the whipsaw
- * stop-out streaks. Before every auto-entry we ask Gemini to classify the
+ * stop-out streaks. Before every auto-entry we ask an LLM to classify the
  * tradeable trend from multi-timeframe closes. Entries must agree with the
  * trend; "chop" blocks entirely.
  *
- * Fail-open by design: if the key is missing, the API errors, or the response
+ * Fail-open by design: if keys are missing, APIs error, or the response
  * is unparseable, the verdict source is "unavailable" and the caller allows
- * the trade. The judge can only ever block, never place orders.
+ * the trade (except exam-desk paths that fail-closed). The judge can only
+ * ever block, never place orders.
  */
+
+export type TrendJudgeSource = LlmProvider | "unavailable";
 
 export interface TrendVerdict {
   trend: "up" | "down" | "chop";
   /** 0-100, model's conviction in the classification */
   strength: number;
   reason: string;
-  source: "gemini" | "unavailable";
+  source: TrendJudgeSource;
   /** Timeframes that agree with trend (e.g. ["1m","5m","15m"]). Empty when unknown. */
   frames?: string[];
+}
+
+/** True when an LLM returned a usable verdict (Gemini or OpenRouter). */
+export function isTrendJudgeLive(source: TrendJudgeSource): boolean {
+  return source === "gemini" || source === "openrouter";
 }
 
 const BINANCE_KLINES = "https://api.binance.com/api/v3/klines";
@@ -36,7 +45,10 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 /** Parse the model's JSON reply into a verdict. Returns null when malformed. */
-export function parseVerdict(text: string): TrendVerdict | null {
+export function parseVerdict(
+  text: string,
+  source: LlmProvider = "gemini",
+): TrendVerdict | null {
   try {
     // Models sometimes wrap JSON in markdown fences despite instructions.
     const cleaned = text.replace(/```(?:json)?/g, "").trim();
@@ -54,7 +66,7 @@ export function parseVerdict(text: string): TrendVerdict | null {
       trend,
       strength: Number.isFinite(strength) ? strength : 0,
       reason: String(obj.reason ?? "").slice(0, 200),
-      source: "gemini",
+      source,
       frames,
     };
   } catch {
@@ -117,7 +129,7 @@ export function verdictAllows(
   return { ok: true, why: `trend ${verdict.trend} (${verdict.strength}) agrees` };
 }
 
-/** Min Gemini strength to cut an open position on adverse 1m+5m momentum. */
+/** Min LLM strength to cut an open position on adverse 1m+5m momentum. */
 export const MOMENTUM_EXIT_MIN_STRENGTH = 60;
 
 /** Don't momentum-exit in the first minutes — let fill + first ticks settle. */
@@ -130,7 +142,7 @@ export const MOMENTUM_EXIT_GRACE_MS = 3 * 60 * 1000;
 export const MOMENTUM_EXIT_MAX_GREEN = 0.03;
 
 /**
- * Should we exit an open long because Gemini 1m+5m turned against us?
+ * Should we exit an open long because 1m+5m turned against us?
  * Fail-closed: unavailable/chop never force a sell (price SL still protects).
  */
 export function shouldMomentumExit(input: {
@@ -147,7 +159,7 @@ export function shouldMomentumExit(input: {
     return { exit: false, why: `grace ${Math.ceil((MOMENTUM_EXIT_GRACE_MS - ageMs) / 60000)}m left` };
   }
 
-  if (input.verdict.source !== "gemini") {
+  if (!isTrendJudgeLive(input.verdict.source)) {
     return { exit: false, why: "trend judge unavailable — hold for SL/trail" };
   }
   if (input.verdict.trend === "chop") {
@@ -210,20 +222,8 @@ function seriesLine(label: string, closes: number[]): string {
   return `${label} closes (oldest→newest, ${pct.toFixed(2)}% over window): ${compact.join(",")}`;
 }
 
-async function askGemini(symbol: string, log: FastifyBaseLogger): Promise<TrendVerdict | null> {
-  const pair = PAIRS[symbol];
-  if (!pair || !env.GEMINI_API_KEY) return null;
-
-  // Horizons match the bot's actual hold time (10-45 min): 1m/5m are the
-  // heartbeat, 15m is the widest context. Anything slower (1h/4h) answers a
-  // swing-trading question the bot never asks.
-  const [m1, m5, m15] = await Promise.all([
-    fetchCloses(pair, "1m", 60), // last hour, minute by minute
-    fetchCloses(pair, "5m", 48), // last 4 hours
-    fetchCloses(pair, "15m", 48), // last 12 hours
-  ]);
-
-  const prompt = [
+function buildTrendPrompt(symbol: string, m1: number[], m5: number[], m15: number[]): string {
+  return [
     `You are a senior professional crypto trader running an institutional options desk. You have traded BTC and ETH through every market regime and your desk's edge is discipline: you never force a trade, you protect capital first, and you know option buyers bleed to theta in sideways markets.`,
     `Judge whether ${symbol}/USD is tradeable with long options (calls or puts) over the NEXT 15-60 MINUTES. Positions are held 10-45 minutes, so the 1m and 5m series matter most; 15m is context only.`,
     seriesLine("1m", m1),
@@ -240,36 +240,32 @@ async function askGemini(symbol: string, log: FastifyBaseLogger): Promise<TrendV
     `Be conservative on chop (conflicting 1m vs 5m), but do NOT wait for 15m to call a trend.`,
     `Respond with ONLY this JSON, no markdown: {"trend":"up"|"down"|"chop","strength":<0-100 integer conviction>,"frames":["1m","5m"],"reason":"<max 15 words>"}`,
   ].join("\n");
+}
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.TREND_JUDGE_MODEL}:generateContent`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": env.GEMINI_API_KEY,
-    },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0,
-        maxOutputTokens: 2048,
-        responseMimeType: "application/json",
-      },
-    }),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    log.warn({ status: res.status, body: body.slice(0, 300) }, "TrendJudge: Gemini request failed");
-    return null;
-  }
-  const data = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-  const verdict = parseVerdict(text);
+async function askTrendLlm(symbol: string, log: FastifyBaseLogger): Promise<TrendVerdict | null> {
+  const pair = PAIRS[symbol];
+  if (!pair) return null;
+  if (!env.GEMINI_API_KEY && !env.OPENROUTER_API_KEY) return null;
+
+  // Horizons match the bot's actual hold time (10-45 min): 1m/5m are the
+  // heartbeat, 15m is the widest context. Anything slower (1h/4h) answers a
+  // swing-trading question the bot never asks.
+  const [m1, m5, m15] = await Promise.all([
+    fetchCloses(pair, "1m", 60),
+    fetchCloses(pair, "5m", 48),
+    fetchCloses(pair, "15m", 48),
+  ]);
+
+  const prompt = buildTrendPrompt(symbol, m1, m5, m15);
+  const completion = await completeJson({ prompt, purpose: "trend", log });
+  if (!completion) return null;
+
+  const verdict = parseVerdict(completion.text, completion.provider);
   if (!verdict) {
-    log.warn({ text: text.slice(0, 300) }, "TrendJudge: unparseable Gemini reply");
+    log.warn(
+      { text: completion.text.slice(0, 300), provider: completion.provider, model: completion.model },
+      "TrendJudge: unparseable LLM reply",
+    );
   }
   return verdict;
 }
@@ -290,7 +286,7 @@ export async function getTrendVerdict(
 
   let verdict: TrendVerdict | null = null;
   try {
-    verdict = await askGemini(sym, log);
+    verdict = await askTrendLlm(sym, log);
   } catch (err) {
     log.warn({ err, symbol: sym }, "TrendJudge: error — failing open");
   }
@@ -307,7 +303,13 @@ export async function getTrendVerdict(
   cache.set(sym, { verdict: final, expiresAt: fetchedAt + ttl, fetchedAt });
   if (verdict) {
     log.info(
-      { symbol: sym, trend: final.trend, strength: final.strength, reason: final.reason },
+      {
+        symbol: sym,
+        trend: final.trend,
+        strength: final.strength,
+        reason: final.reason,
+        source: final.source,
+      },
       "TrendJudge verdict",
     );
   }

@@ -22,6 +22,15 @@ describe("parseVerdict", () => {
     expect(v!.source).toBe("gemini");
   });
 
+  it("tags OpenRouter source when provided", () => {
+    const v = parseVerdict(
+      '{"trend":"down","strength":66,"reason":"1m+5m down","frames":["1m","5m"]}',
+      "openrouter",
+    );
+    expect(v!.source).toBe("openrouter");
+    expect(v!.trend).toBe("down");
+  });
+
   it("parses replies wrapped in markdown fences", () => {
     const v = parseVerdict('```json\n{"trend":"chop","strength":60,"reason":"sideways"}\n```');
     expect(v).not.toBeNull();
@@ -180,6 +189,17 @@ describe("shouldMomentumExit", () => {
         openedAtMs: opened,
       }).exit,
     ).toBe(false);
+  });
+
+  it("exits on adverse OpenRouter verdict same as Gemini", () => {
+    const r = shouldMomentumExit({
+      positionDirection: "BUY_CALL",
+      verdict: { ...adverseDown, source: "openrouter" },
+      entryPremium: 100,
+      exitPx: 95,
+      openedAtMs: opened,
+    });
+    expect(r.exit).toBe(true);
   });
 
   it("does not exit on weak adverse strength", () => {
