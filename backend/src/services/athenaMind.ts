@@ -19,9 +19,9 @@ export const ATHENA_MIND = `
 
 ## Exits
 - Hard SL / TP1 / trail / protect breakeven from premium moves.
-- signal_flip when AI opposite (with grace).
+- signal_flip when AI opposite (with grace). On 1m probes: skip flip-exit while green/raised — leave to trail/SL/TP.
 - momentum_flip when Gemini 1m+5m turns against open (grace ~3m, strength≥60; skip if already ≥+3% green).
-- quick_fail: 1m-entered probes that never raise above entry within 5 minutes are cut.
+- quick_fail: 1m probes flat/red after 5m are cut. "Raised" = bid OR mark OR peak ever above entry (not bid-alone vs ask fill).
 
 ## What Co-raiser should do
 - Speak like a co-raiser: warm, direct, push back when logic looks expensive.

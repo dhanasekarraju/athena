@@ -8,7 +8,7 @@ import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
 import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_LOSS_MS, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
 import { getDirectionAgeMs } from "./signalFreshness.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
-import { buildEntryLevels, decideLongExit, isOneMinuteTimeframe, shouldQuickFailExit } from "./exitLogic.js";
+import { buildEntryLevels, decideLongExit, isOneMinuteTimeframe, probeHasRaised, shouldQuickFailExit } from "./exitLogic.js";
 import { getTrendVerdict, shouldMomentumExit, verdictAllows } from "./trendJudge.js";
 import { notifyBuy, notifySell, notifyTrade } from "./pushService.js";
 import { extractFilledSize, reconcileEntryFill } from "./orderFill.js";
@@ -336,13 +336,45 @@ export class AutoTrader {
       if (ageMs < 5 * 60 * 1000) continue;
 
       let exitPx = pos.entryPremium;
+      let markPx = 0;
+      let bidPx = 0;
       try {
         const t = await this.client.getTicker(pos.productSymbol);
-        const bid = this.client.bestBid(t);
-        const mark = this.client.markPrice(t);
-        exitPx = bid > 0 ? bid : mark > 0 ? mark : pos.entryPremium;
+        bidPx = this.client.bestBid(t);
+        markPx = this.client.markPrice(t);
+        exitPx = bidPx > 0 ? bidPx : markPx > 0 ? markPx : pos.entryPremium;
       } catch {
         // keep entry
+      }
+
+      const snap = (pos.signalSnapshot ?? {}) as {
+        timeframe?: string;
+        peakExitPx?: number;
+      };
+      // 1m probes: never AI-flip-dump a green/raising book — leave to trail/SL/TP.
+      // (Today's +3% ETH dump at ~5.3m was exactly this path.)
+      if (isOneMinuteTimeframe(snap.timeframe)) {
+        const raised = probeHasRaised({
+          entryPremium: pos.entryPremium,
+          exitPx,
+          markPx,
+          peakExitPx: snap.peakExitPx,
+        });
+        if (raised) {
+          this.log.info(
+            {
+              id: pos.id,
+              product: pos.productSymbol,
+              entry: pos.entryPremium,
+              bid: bidPx,
+              mark: markPx,
+              peak: snap.peakExitPx,
+              signalDirection: signal.direction,
+            },
+            "Skip signal_flip on green 1m probe — leave to trail/SL",
+          );
+          continue;
+        }
       }
 
       this.pushActivity(
@@ -922,6 +954,8 @@ export class AutoTrader {
       openedAtMs: pos.openedAt.getTime(),
       entryPremium: pos.entryPremium,
       exitPx,
+      markPx: quotes.mark,
+      peakExitPx: Math.max(snap.peakExitPx ?? 0, decision.peakExitPx ?? 0) || undefined,
     });
     if (quick.exit) {
       this.pushActivity("exit", `Quick-fail ${pos.productSymbol} — ${quick.why}`, {

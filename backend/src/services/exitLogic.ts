@@ -307,17 +307,38 @@ export function isOneMinuteTimeframe(tf?: string | null): boolean {
 }
 
 /**
- * 1m probe rule: if premium has not raised (exit ≤ entry) after grace, cut.
- * Small early loss preferred over waiting for full SL — fees are similar either way.
+ * 1m probe rule: if premium has not raised after grace, cut.
+ * "Raised" uses best of executable bid, mark, and peak — entry is usually ask-fill,
+ * so bid-alone falsely looks flat while mark is already green.
  * Only applies to positions entered on 1m; 5m/15m keep SL / trail / mom flip.
  */
 export const QUICK_FAIL_GRACE_MS = 5 * 60 * 1000;
+
+/** True if any trusted premium evidence cleared entry (ask fill). */
+export function probeHasRaised(input: {
+  entryPremium: number;
+  exitPx?: number;
+  markPx?: number;
+  peakExitPx?: number;
+}): boolean {
+  if (!(input.entryPremium > 0)) return false;
+  const evidence = [input.exitPx ?? 0, input.markPx ?? 0, input.peakExitPx ?? 0].filter(
+    (n) => n > 0,
+  );
+  if (!evidence.length) return false;
+  return Math.max(...evidence) > input.entryPremium;
+}
 
 export function shouldQuickFailExit(input: {
   timeframe?: string | null;
   openedAtMs: number;
   entryPremium: number;
+  /** Executable sell (usually bid). */
   exitPx: number;
+  /** Mid/mark — what the parent sees rising on the book. */
+  markPx?: number;
+  /** Best exit seen so far this hold. */
+  peakExitPx?: number;
   nowMs?: number;
 }): { exit: boolean; why: string } {
   if (!isOneMinuteTimeframe(input.timeframe)) {
@@ -332,8 +353,20 @@ export function shouldQuickFailExit(input: {
   if (input.exitPx <= 0 || input.entryPremium <= 0) {
     return { exit: false, why: "bad price" };
   }
-  if (input.exitPx > input.entryPremium) {
-    const pct = ((input.exitPx / input.entryPremium - 1) * 100).toFixed(1);
+  if (
+    probeHasRaised({
+      entryPremium: input.entryPremium,
+      exitPx: input.exitPx,
+      markPx: input.markPx,
+      peakExitPx: input.peakExitPx,
+    })
+  ) {
+    const best = Math.max(
+      input.exitPx,
+      input.markPx ?? 0,
+      input.peakExitPx ?? 0,
+    );
+    const pct = ((best / input.entryPremium - 1) * 100).toFixed(1);
     return { exit: false, why: `raised +${pct}% — keep` };
   }
   const pct = ((input.exitPx / input.entryPremium - 1) * 100).toFixed(1);

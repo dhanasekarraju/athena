@@ -242,4 +242,31 @@ describe("shouldQuickFailExit", () => {
     expect(r.exit).toBe(false);
     expect(r.why).toMatch(/raised/i);
   });
+
+  it("keeps when mark raised even if bid still ≤ entry (ask-fill trap)", () => {
+    const r = shouldQuickFailExit({
+      timeframe: "1m",
+      openedAtMs: t0,
+      entryPremium: 100,
+      exitPx: 99,
+      markPx: 101.5,
+      nowMs: t0 + 6 * 60_000,
+    });
+    expect(r.exit).toBe(false);
+    expect(r.why).toMatch(/raised/i);
+  });
+
+  it("keeps when peak raised earlier even if now flat", () => {
+    const r = shouldQuickFailExit({
+      timeframe: "1m",
+      openedAtMs: t0,
+      entryPremium: 100,
+      exitPx: 99,
+      markPx: 99.5,
+      peakExitPx: 103,
+      nowMs: t0 + 6 * 60_000,
+    });
+    expect(r.exit).toBe(false);
+    expect(r.why).toMatch(/raised/i);
+  });
 });
