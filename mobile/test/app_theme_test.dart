@@ -1,8 +1,11 @@
 import 'package:athena/core/constants/app_constants.dart';
 import 'package:athena/core/theme/app_theme.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  setUp(() => AppColors.bind(Brightness.light));
+
   group('directionLabel', () {
     test('maps known directions', () {
       expect(directionLabel('BUY_CALL'), 'BUY CALL');
@@ -25,5 +28,12 @@ void main() {
 
   test('manual execution disclaimer is present', () {
     expect(AppConstants.manualExecutionDisclaimer, contains('manual'));
+  });
+
+  test('dark palette binds different background', () {
+    AppColors.bind(Brightness.light);
+    final lightBg = AppColors.background;
+    AppColors.bind(Brightness.dark);
+    expect(AppColors.background, isNot(lightBg));
   });
 }

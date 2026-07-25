@@ -3,17 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'app_router.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/theme_mode_provider.dart';
 import 'core/providers.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Firebase is optional at first run — guard so local dev without
-  // google-services.json / GoogleService-Info.plist doesn't crash.
   try {
     await Firebase.initializeApp();
   } catch (_) {
-    // Push notifications disabled until Firebase config files are added.
+    // Push optional until Firebase config exists.
   }
 
   runApp(const ProviderScope(child: AthenaApp()));
@@ -44,11 +43,18 @@ class _AthenaAppState extends ConsumerState<AthenaApp> {
 
   @override
   Widget build(BuildContext context) {
+    final themeMode = ref.watch(themeModeProvider);
+
     return MaterialApp.router(
       title: 'ATHENA',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      themeMode: ThemeMode.light,
+      darkTheme: AppTheme.dark(),
+      themeMode: themeMode,
+      builder: (context, child) {
+        AppColors.bind(Theme.of(context).brightness);
+        return child ?? const SizedBox.shrink();
+      },
       routerConfig: appRouter,
     );
   }

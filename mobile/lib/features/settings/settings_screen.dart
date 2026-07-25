@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/theme/theme_mode_provider.dart';
 import '../../core/providers.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/bot_config.dart';
@@ -140,9 +141,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         data: (cfg) {
           _draft ??= cfg;
           final draft = _draft!;
+          final themeMode = ref.watch(themeModeProvider);
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              _sectionCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Appearance',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Classical Athena — light paper or dark ink.',
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                    const SizedBox(height: 10),
+                    SegmentedButton<ThemeMode>(
+                      segments: const [
+                        ButtonSegment(value: ThemeMode.system, label: Text('System'), icon: Icon(Icons.brightness_auto, size: 16)),
+                        ButtonSegment(value: ThemeMode.light, label: Text('Light'), icon: Icon(Icons.light_mode, size: 16)),
+                        ButtonSegment(value: ThemeMode.dark, label: Text('Dark'), icon: Icon(Icons.dark_mode, size: 16)),
+                      ],
+                      selected: {themeMode},
+                      onSelectionChanged: (set) {
+                        final mode = set.first;
+                        ref.read(themeModeProvider.notifier).setMode(mode);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
               _sectionCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -367,7 +397,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: AppColors.border),
       ),
       child: child,
