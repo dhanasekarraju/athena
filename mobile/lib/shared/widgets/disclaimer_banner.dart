@@ -19,7 +19,7 @@ class DisclaimerBanner extends StatelessWidget {
       child: Row(
         children: [
           Icon(Icons.info_outline, size: 16, color: AppColors.hold),
-          SizedBox(width: 8),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               AppConstants.manualExecutionDisclaimer,

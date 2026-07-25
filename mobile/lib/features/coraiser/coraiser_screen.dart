@@ -147,7 +147,7 @@ class _CoraiserScreenState extends ConsumerState<CoraiserScreen> {
                             return Align(
                               alignment: Alignment.centerLeft,
                               child: Padding(
-                                padding: EdgeInsets.symmetric(vertical: 8),
+                                padding: const EdgeInsets.symmetric(vertical: 8),
                                 child: Text('…', style: TextStyle(color: AppColors.textSecondary)),
                               ),
                             );
