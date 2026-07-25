@@ -50,8 +50,8 @@ interface AiSignal {
 
 /**
  * Timeframes the server polls so the bot does not depend on the mobile app.
- * 1m = fast probe entries (must raise within ~5m or quick_fail).
- * 5m/15m = slower confirmation / continuation.
+ * 1m still polled for momentum/display; live exam desk blocks 1m *entries*
+ * (paper may still probe). Real tickets: 5m / 15m.
  */
 const POLL_TIMEFRAMES = ["1m", "5m", "15m"] as const;
 

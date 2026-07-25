@@ -32,6 +32,8 @@ export interface SelectedDeltaOption {
   bid: number;
   ask: number;
   openInterest: number;
+  /** Mark IV decimal when present on ticker/greeks. */
+  markIv: number | null;
   /** Underlying units per 1 contract (BTC opts ~0.001, ETH ~0.01). */
   contractValue: number;
 }
@@ -122,6 +124,13 @@ export function selectDeltaOption(
   const best = pool[0];
   const { bid, ask } = bidAsk(best.t);
   const contractValue = toFinite(best.t.contract_value, defaultContractValue(best.t.symbol));
+  const rawIv =
+    (best.t as { mark_iv?: string | number; greeks?: { mark_iv?: string | number; iv?: string | number } })
+      .mark_iv ??
+    (best.t as { greeks?: { mark_iv?: string | number; iv?: string | number } }).greeks?.mark_iv ??
+    (best.t as { greeks?: { iv?: string | number } }).greeks?.iv;
+  const ivN = rawIv != null ? Number(rawIv) : NaN;
+  const markIv = Number.isFinite(ivN) && ivN > 0 ? (ivN > 3 ? ivN / 100 : ivN) : null;
   return {
     productId: best.t.product_id,
     productSymbol: best.t.symbol,
@@ -133,6 +142,7 @@ export function selectDeltaOption(
     bid,
     ask,
     openInterest: tickerOpenInterest(best.t),
+    markIv,
     contractValue,
   };
 }

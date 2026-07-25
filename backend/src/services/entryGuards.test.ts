@@ -28,8 +28,19 @@ describe("evaluateEntryGuards", () => {
     skipHighRisk: false,
   };
 
-  it("allows 1m timeframe (probe + quick-fail path)", () => {
+  it("blocks 1m on live exam desk (allowOneMinuteEntry false/undefined)", () => {
     const r = evaluateEntryGuards({ ...base, timeframe: "1m", confidence: 80 });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/1m blocked/i);
+  });
+
+  it("allows 1m when paper/exam override allowOneMinuteEntry", () => {
+    const r = evaluateEntryGuards({
+      ...base,
+      timeframe: "1m",
+      confidence: 80,
+      allowOneMinuteEntry: true,
+    });
     expect(r.ok).toBe(true);
   });
 

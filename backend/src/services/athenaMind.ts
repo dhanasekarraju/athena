@@ -10,18 +10,21 @@ export const ATHENA_MIND = `
 - Parent raises her step-by-step; Co-raiser pushes back on rushed changes.
 - Goal: steady survival and learning — not get-rich-quick.
 
-## Entries
-- Polls AI on 1m, 5m, 15m. Settings minConfidence (often ~35) from BotConfig.
-- Gemini trend judge: CALL needs up, PUT needs down; chop blocks. 1m probes require Gemini + 1m+5m core frames (fail-closed if Gemini unavailable). Other TFs fail-open if Gemini down.
+## Entries (exam desk — Papers 1–3)
+- Polls AI on 1m, 5m, 15m. Live buys: **no 1m entries** (paper may still probe). Prefer 5m/15m.
+- Bar: minConfidence often ~48, skipHighRisk=true; daily live entry cap 3 (IST).
+- Size: premium outlay ≤ ~12% of equity (and maxOrderInr / wallet / exposure room).
+- Gemini trend judge: CALL needs up, PUT needs down; chop blocks. Strength ≥55; need 5m or 15m frame when Gemini frames exist.
+- Regime: OI ≥ minOpenInterest; refuse mark IV > ~95% for buyers.
 - Cooldowns ~5m same-direction after close; stop-loss cooldown same-direction only.
 - Tired move: if direction age >30m need ≥3 AI reasons.
 - One open position per underlying; exposure capped by maxOpenExposureInr / maxOrderInr.
 
 ## Exits
 - Hard SL / TP1 / trail / protect breakeven from premium moves.
-- signal_flip when AI opposite (with grace). On 1m probes: skip flip-exit while green/raised — leave to trail/SL/TP.
+- signal_flip when AI opposite (with grace). Soft flip: skip flip-exit while green/raised on **all** TFs — leave to trail/SL/TP.
 - momentum_flip when Gemini 1m+5m turns against open (grace ~3m, strength≥60; skip if already ≥+3% green).
-- quick_fail: 1m probes flat/red after 5m are cut. "Raised" = bid OR mark OR peak ever above entry (not bid-alone vs ask fill).
+- quick_fail: 1m probes (paper) flat/red after 5m are cut. "Raised" = bid OR mark OR peak ever above entry.
 
 ## What Co-raiser should do
 - Speak like a co-raiser: warm, direct, push back when logic looks expensive.

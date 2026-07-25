@@ -13,6 +13,13 @@ import { getTrendVerdict, shouldMomentumExit, verdictAllows } from "./trendJudge
 import { notifyBuy, notifySell, notifyTrade } from "./pushService.js";
 import { extractFilledSize, reconcileEntryFill } from "./orderFill.js";
 import { evaluateLiquidityGuard } from "./liquidityGuard.js";
+import { evaluateRegimeGuard } from "./regimeGuard.js";
+import {
+  EXAM_MAX_DAILY_ENTRIES,
+  EXAM_MAX_MARK_IV,
+  EXAM_MIN_TREND_STRENGTH,
+  EXAM_RISK_PCT_OF_EQUITY,
+} from "./examDesk.js";
 import {
   countTrailingStopLosses,
   evaluateCircuitBreaker,
@@ -261,6 +268,7 @@ export class AutoTrader {
       timeframe: signal.timeframe,
       minConfidence: cfg.minConfidence,
       skipHighRisk: cfg.skipHighRisk,
+      allowOneMinuteEntry: paperMode,
       lastStopLossAt: recentStop?.closedAt?.toISOString() ?? null,
       lastSameDirectionCloseAt: recentSameDir?.closedAt?.toISOString() ?? null,
       lastSameDirectionExitReason: recentSameDir?.exitReason ?? null,
@@ -351,30 +359,28 @@ export class AutoTrader {
         timeframe?: string;
         peakExitPx?: number;
       };
-      // 1m probes: never AI-flip-dump a green/raising book — leave to trail/SL/TP.
-      // (Today's +3% ETH dump at ~5.3m was exactly this path.)
-      if (isOneMinuteTimeframe(snap.timeframe)) {
-        const raised = probeHasRaised({
-          entryPremium: pos.entryPremium,
-          exitPx,
-          markPx,
-          peakExitPx: snap.peakExitPx,
-        });
-        if (raised) {
-          this.log.info(
-            {
-              id: pos.id,
-              product: pos.productSymbol,
-              entry: pos.entryPremium,
-              bid: bidPx,
-              mark: markPx,
-              peak: snap.peakExitPx,
-              signalDirection: signal.direction,
-            },
-            "Skip signal_flip on green 1m probe — leave to trail/SL",
-          );
-          continue;
-        }
+      // Exam Paper 1: never AI-flip-dump a green/raising book — leave to trail/SL/TP.
+      const raised = probeHasRaised({
+        entryPremium: pos.entryPremium,
+        exitPx,
+        markPx,
+        peakExitPx: snap.peakExitPx,
+      });
+      if (raised) {
+        this.log.info(
+          {
+            id: pos.id,
+            product: pos.productSymbol,
+            entry: pos.entryPremium,
+            bid: bidPx,
+            mark: markPx,
+            peak: snap.peakExitPx,
+            signalDirection: signal.direction,
+            timeframe: snap.timeframe,
+          },
+          "Skip signal_flip on green position — leave to trail/SL",
+        );
+        continue;
       }
 
       this.pushActivity(
@@ -432,6 +438,26 @@ export class AutoTrader {
       this.pushActivity("skip", `${sym} skipped — already open on underlying`, { symbol: sym });
       this.log.info({ symbol: signal.symbol }, "Skip auto entry: already open on underlying");
       return;
+    }
+
+    // Paper 1: daily entry cap (IST) — exam desk, not random spray.
+    if (!paperMode) {
+      const dayStart = startOfIstTradingDay();
+      const openedToday = await this.prisma.botPosition.count({
+        where: {
+          paper: false,
+          openedAt: { gte: dayStart },
+        },
+      });
+      if (openedToday >= EXAM_MAX_DAILY_ENTRIES) {
+        this.pushActivity(
+          "skip",
+          `${sym} skipped — daily entry cap ${EXAM_MAX_DAILY_ENTRIES} (exam desk)`,
+          { symbol: sym, details: { openedToday, cap: EXAM_MAX_DAILY_ENTRIES } },
+        );
+        this.log.info({ openedToday, cap: EXAM_MAX_DAILY_ENTRIES }, "Skip auto entry: daily cap");
+        return;
+      }
     }
 
     // Gemini trend judge: entry must agree with the higher-level trend; chop blocks.
@@ -544,6 +570,28 @@ export class AutoTrader {
       return;
     }
 
+    // Paper 3: MS + OI + Vol hybrid permission.
+    const regime = evaluateRegimeGuard({
+      direction: signal.direction as "BUY_CALL" | "BUY_PUT",
+      verdict,
+      openInterest: selected.openInterest,
+      minOpenInterest: cfg.minOpenInterest,
+      markIv: selected.markIv,
+      maxMarkIv: EXAM_MAX_MARK_IV,
+      minTrendStrength: EXAM_MIN_TREND_STRENGTH,
+    });
+    if (!regime.ok) {
+      this.pushActivity("skip", `${sym} skipped — ${regime.reason}`, {
+        symbol: sym,
+        details: { ...regime.details, product: selected.productSymbol, markIv: selected.markIv },
+      });
+      this.log.info(
+        { symbol: sym, reason: regime.reason, product: selected.productSymbol },
+        "Skip auto entry: regime",
+      );
+      return;
+    }
+
     const premium = selected.ask > 0 ? selected.ask : selected.markPremium;
     if (premium <= 0) {
       this.pushActivity("skip", `${sym} skipped — premium ≤ 0`, {
@@ -558,15 +606,22 @@ export class AutoTrader {
     if (costPerContractInr <= 0) return;
 
     let budget = Math.min(cfg.maxOrderInr, room);
-    // Cap by what the wallet can actually pay — otherwise Delta rejects the
-    // order with a 400 and we retry forever on every poll.
+    // Paper 2: size by equity risk fraction (micro-account aware).
+    let equityInr: number | null = null;
     if (!paperMode) {
       try {
         const usdAvail = await this.client.getUsdAvailable();
-        if (usdAvail != null) budget = Math.min(budget, usdAvail * usdInr * 0.95);
+        if (usdAvail != null) {
+          equityInr = usdAvail * usdInr;
+          const riskBudget = equityInr * EXAM_RISK_PCT_OF_EQUITY;
+          budget = Math.min(budget, usdAvail * usdInr * 0.95, riskBudget);
+        }
       } catch (err) {
         this.log.warn({ err }, "Could not read wallet balance before sizing");
       }
+    } else {
+      equityInr = env.PAPER_BALANCE_INR;
+      budget = Math.min(budget, equityInr * EXAM_RISK_PCT_OF_EQUITY);
     }
     const size = Math.floor(budget / costPerContractInr);
     if (size < 1) {
@@ -581,6 +636,8 @@ export class AutoTrader {
             costPerContractUsd,
             costPerContractInr,
             budget,
+            equityInr,
+            riskPct: EXAM_RISK_PCT_OF_EQUITY,
             product: selected.productSymbol,
           },
         },

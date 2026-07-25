@@ -1,8 +1,10 @@
 /**
  * Soft entry filters for AutoTrader.
- * Confidence / High-risk stay fully under BotConfig (Settings UI) — options
- * signals often sit near ~32 and High risk is normal, so we do not hard-floor those.
+ * Confidence / High-risk stay under BotConfig (Settings UI).
+ * Live exam desk blocks 1m entries unless allowOneMinuteEntry is true (paper).
  */
+
+import { isOneMinuteTimeframe } from "./exitLogic.js";
 
 export interface EntryGuardInput {
   symbol: string;
@@ -12,6 +14,8 @@ export interface EntryGuardInput {
   timeframe?: string | null;
   minConfidence: number;
   skipHighRisk: boolean;
+  /** When false (live exam), 1m entries are blocked. Paper may set true. */
+  allowOneMinuteEntry?: boolean;
   /** ISO timestamp of last stop_loss close on this underlying, if any */
   lastStopLossAt?: string | null;
   /** ISO timestamp of last close in the same direction (any exit reason) */
@@ -33,9 +37,8 @@ export interface EntryGuardResult {
 }
 
 /**
- * 1m is allowed as a fast probe entry. Gemini still gates direction; if the
- * premium does not raise within ~5m, AutoTrader cuts via quick_fail.
- * @deprecated empty — kept so older imports do not break.
+ * 1m live entries blocked on exam desk (allowOneMinuteEntry=false).
+ * Paper may re-enable probes. @deprecated empty set unused — see allowOneMinuteEntry.
  */
 export const BLOCKED_ENTRY_TIMEFRAMES = new Set<string>();
 
@@ -73,6 +76,16 @@ export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
   const sym = input.symbol.toUpperCase();
   const required = requiredConfidenceForSymbol(sym, input.minConfidence);
   const now = input.nowMs ?? Date.now();
+  const allow1m = input.allowOneMinuteEntry === true;
+
+  if (!allow1m && isOneMinuteTimeframe(input.timeframe)) {
+    return {
+      ok: false,
+      reason: "1m blocked on live exam desk",
+      requiredConfidence: required,
+      details: { timeframe: input.timeframe, allowOneMinuteEntry: false },
+    };
+  }
 
   if (input.confidence < required) {
     return {
