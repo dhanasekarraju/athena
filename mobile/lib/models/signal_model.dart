@@ -120,6 +120,8 @@ class Signal {
   final UnderlyingPlan underlyingPlan;
   final OptionContract? option;
   final PremiumPlan? premiumPlan;
+  /// True when backend served a cached backup (live AI unavailable).
+  final bool stale;
 
   Signal({
     required this.symbol,
@@ -137,6 +139,7 @@ class Signal {
     required this.underlyingPlan,
     required this.option,
     required this.premiumPlan,
+    this.stale = false,
   });
 
   factory Signal.fromJson(Map<String, dynamic> json) {
@@ -174,6 +177,7 @@ class Signal {
       underlyingPlan: underlyingPlan,
       option: optionJson is Map<String, dynamic> ? OptionContract.fromJson(optionJson) : null,
       premiumPlan: premiumJson is Map<String, dynamic> ? PremiumPlan.fromJson(premiumJson) : null,
+      stale: json['stale'] == true,
     );
   }
 }

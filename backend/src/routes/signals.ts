@@ -1,6 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { aiEngineClient } from "../services/aiEngineClient.js";
 import { getAutoTrader } from "../services/autoTrader.js";
+import {
+  STALE_SIGNAL_MAX_AGE_MS,
+  dbSignalToAiSignal,
+} from "../services/signalBackup.js";
 
 interface AiOption {
   venue: string;
@@ -48,6 +52,7 @@ interface AiSignal {
   factor_breakdown: Record<string, unknown>;
   price: number;
   insufficient_data: boolean;
+  stale?: boolean;
 }
 
 export default async function signalRoutes(app: FastifyInstance) {
@@ -120,9 +125,35 @@ export default async function signalRoutes(app: FastifyInstance) {
         reasons: signal.reasons,
       });
 
-      return reply.send(signal);
+      return reply.send({ ...signal, stale: false });
     } catch (err) {
       app.log.error(err);
+
+      const cutoff = new Date(Date.now() - STALE_SIGNAL_MAX_AGE_MS);
+      const cached = await app.prisma.signal.findFirst({
+        where: {
+          symbol: symbol.toUpperCase(),
+          timeframe,
+          createdAt: { gte: cutoff },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (cached) {
+        const backup = dbSignalToAiSignal(cached);
+        app.log.warn(
+          {
+            symbol,
+            timeframe,
+            cachedAt: cached.createdAt,
+            ageMin: Math.round((Date.now() - cached.createdAt.getTime()) / 60_000),
+          },
+          "Serving stale backup signal (live engine unavailable)",
+        );
+        // Display-only — do NOT call onSignal / AutoTrader on stale rows.
+        return reply.send(backup);
+      }
+
       return reply.code(502).send({ error: "Signal engine unavailable" });
     }
   });

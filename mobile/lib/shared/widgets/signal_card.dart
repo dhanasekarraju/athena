@@ -73,6 +73,13 @@ class SignalCard extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
             ],
+            if (signal.stale) ...[
+              const SizedBox(height: 10),
+              Text(
+                'Backup · cached',
+                style: TextStyle(fontSize: 12, color: AppColors.hold),
+              ),
+            ],
           ],
         ),
       ),

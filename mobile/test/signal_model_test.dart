@@ -44,6 +44,7 @@ void main() {
         'reasons': ['RSI oversold'],
         'price': 95000.0,
         'insufficient_data': false,
+        'stale': true,
       });
 
       expect(signal.option, isNotNull);
@@ -53,6 +54,7 @@ void main() {
       expect(signal.premiumPlan!.target1, 1710.0);
       expect(signal.underlyingPlan.stopLoss, 94000.0);
       expect(signal.option!.shortLabel, contains('96000C'));
+      expect(signal.stale, isTrue);
     });
 
     test('HOLD / empty option chain leaves option and premiumPlan null', () {
