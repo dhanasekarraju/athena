@@ -3,7 +3,7 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import cors from "@fastify/cors";
 import websocketPlugin from "@fastify/websocket";
-import { env } from "./utils/env";
+import { env } from "./utils/env.js";
 import prismaPlugin from "./plugins/prisma.js";
 import jwtPlugin from "./plugins/jwt.js";
 
@@ -66,7 +66,7 @@ async function main() {
   });
 
   // Security: helmet
-  await app.register(helmet, {
+  await app.register(helmet as any, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -80,15 +80,15 @@ async function main() {
   });
 
   // Rate limiting
-  await app.register(rateLimit, {
+  await app.register(rateLimit as any, {
     max: 100,
     timeWindow: "1 minute",
     // Note: We are not excluding health and metrics endpoints from rate limiting due to limitation of the plugin version.
     // In a future update, we can adjust the plugin version or use a different method to exclude these endpoints.
   });
 
-  await app.register(cors, { origin: env.CORS_ORIGIN });
-  await app.register(websocketPlugin);
+  await app.register(cors as any, { origin: env.CORS_ORIGIN });
+  await app.register(websocketPlugin as any);
   await app.register(prismaPlugin);
   await app.register(jwtPlugin);
 
@@ -174,9 +174,16 @@ async function main() {
   // Enhanced error handler with request logger
   app.setErrorHandler((error, request: FastifyRequest, reply: FastifyReply) => {
     const log = request.log ?? app.log;
-    log.error(error);
-    reply.code(error.statusCode ?? 500).send({
-      error: error.message || "Internal Server Error",
+    let err: Error;
+    if (error instanceof Error) {
+      err = error;
+    } else {
+      err = new Error(String(error));
+    }
+    log.error(err);
+    const statusCode = (err as any).statusCode ?? 500;
+    reply.code(statusCode).send({
+      error: err.message || "Internal Server Error",
       // Include request ID in error response for tracing
       requestId: request.id
     });

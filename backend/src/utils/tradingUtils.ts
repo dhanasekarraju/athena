@@ -1,4 +1,4 @@
-import type { DeltaTicker } from "../services/delta/client";
+import type { DeltaTicker } from "../services/delta/client.js";
 
 /**
  * Calculate limit buy price with slippage protection
@@ -101,5 +101,5 @@ export enum TimeInForce {
   IOC = "ioc",          // Immediate or Cancel
   GTC = "gtc",          // Good Till Cancelled
   FOK = "fok",          // Fill or Kill
-  GTX = "g tx"          // Good Till Crossing (post-only)
+  GTX = "gtx"           // Good Till Crossing (post-only)
 }
