@@ -43,13 +43,13 @@ const EnvSchema = z.object({
   OPENROUTER_TREND_MODELS: z
     .string()
     .default(
-      "nvidia/nemotron-3-nano-30b-a3b:free,openai/gpt-oss-20b:free,inclusionai/ling-3.0-flash:free,google/gemma-4-31b-it:free,openrouter/free",
+      "nvidia/nemotron-3-nano-30b-a3b:free,openai/gpt-oss-20b:free,inclusionai/ling-3.0-flash:free,google/gemma-4-31b-it:free,openrouter/free"
     ),
   /** Comma-separated free models for Co-raiser chat failover. */
   OPENROUTER_CORAISER_MODEL: z
     .string()
     .default("nvidia/nemotron-3-nano-30b-a3b:free,inclusionai/ling-3.0-flash:free,openrouter/free"),
-  /** Used to size Delta USD-quoted options against INR risk caps */
+  /** Used to size Dollar-quoted options against INR risk caps */
   USD_INR_RATE: z.coerce.number().default(85),
   /** Virtual cash for paper trading equity display */
   PAPER_BALANCE_INR: z.coerce.number().default(10000),
@@ -58,6 +58,8 @@ const EnvSchema = z.object({
    * Empty = push disabled (fail-soft).
    */
   FIREBASE_SERVICE_ACCOUNT_JSON: z.string().default(""),
+  /** Slippage tolerance in basis points (default 5 bps = 0.05%) */
+  SLIPPAGE_BPS: z.coerce.number().default(5),
 });
 
 export const env = EnvSchema.parse(process.env);

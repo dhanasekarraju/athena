@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { env } from "../utils/env.js";
-import { DeltaClient } from "./delta/client.js";
+import { DeltaClient, DeltaOrderType, TimeInForce } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
 import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_LOSS_MS, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
@@ -14,6 +14,7 @@ import { notifyBuy, notifySell, notifyTrade } from "./pushService.js";
 import { extractFilledSize, reconcileEntryFill } from "./orderFill.js";
 import { evaluateLiquidityGuard } from "./liquidityGuard.js";
 import { evaluateRegimeGuard } from "./regimeGuard.js";
+import { calculateLimitBuyPrice, calculateLimitSellPrice, calculateSlippageBps } from "../utils/tradingUtils.js";
 import {
   EXAM_MAX_DAILY_ENTRIES,
   EXAM_MAX_MARK_IV,
@@ -97,12 +98,15 @@ export class AutoTrader {
   private readonly activity: BotActivityEvent[] = [];
   /** Throttle Gemini momentum-exit checks per position (monitor is 5s). */
   private readonly momentumExitCheckedAt = new Map<string, number>();
+  /** Slippage tolerance in basis points */
+  private readonly slippageBps: number;
 
   constructor(
     private readonly prisma: PrismaClient,
     private readonly log: FastifyBaseLogger,
   ) {
     this.client = DeltaClient.fromEnv(env);
+    this.slippageBps = env.SLIPPAGE_BPS;
   }
 
   getActivity(limit = 80): BotActivityEvent[] {
@@ -674,15 +678,22 @@ export class AutoTrader {
         "PAPER buy (no live order)",
       );
     } else {
-      const order = await this.client.placeMarketOrder({
+      // Calculate limit price with slippage protection for buying
+      const ticker = await this.client.getTicker(selected.productSymbol);
+      const limitPrice = calculateLimitBuyPrice(ticker, this.slippageBps);
+
+      const order = await this.client.placeOrder({
         productId: selected.productId,
         productSymbol: selected.productSymbol,
         side: "buy",
         size: requestedSize,
         clientOrderId,
+        orderType: DeltaOrderType.LIMIT,
+        limitPrice,
+        timeInForce: TimeInForce.GTC, // Good Till Cancelled for limit orders
       });
       entryOrderId = String(order.id);
-      fillPremium = Number(order.average_fill_price || premium) || premium;
+      fillPremium = Number(order.average_fill_price || limitPrice) || limitPrice;
       const filledFromOrder = extractFilledSize(order);
       const reconciled = reconcileEntryFill({
         requestedSize,
@@ -695,12 +706,19 @@ export class AutoTrader {
         if (reconciled.fillSize > 0) {
           try {
             const unwindId = `ath-uw-${randomUUID().replace(/-/g, "").slice(0, 22)}`;
-            await this.client.placeMarketOrder({
+            // Calculate limit price for unwinding (selling)
+            const ticker = await this.client.getTicker(selected.productSymbol);
+            const limitPrice = calculateLimitSellPrice(ticker, this.slippageBps);
+
+            await this.client.placeOrder({
               productId: selected.productId,
               productSymbol: selected.productSymbol,
               side: "sell",
               size: reconciled.fillSize,
               clientOrderId: unwindId,
+              orderType: DeltaOrderType.LIMIT,
+              limitPrice,
+              timeInForce: TimeInForce.IOC, // Immediate or Cancel for unwind
               reduceOnly: true,
             });
             this.log.warn(
@@ -1132,12 +1150,19 @@ export class AutoTrader {
         skipEx ? "External/sync close (no Delta sell)" : partial ? "PAPER partial sell" : "PAPER sell",
       );
     } else {
-      const order = await this.client.placeMarketOrder({
+      // Calculate limit price with slippage protection for selling
+      const ticker = await this.client.getTicker(pos.productSymbol);
+      const limitPrice = calculateLimitSellPrice(ticker, this.slippageBps);
+
+      const order = await this.client.placeOrder({
         productId: pos.productId,
         productSymbol: pos.productSymbol,
         side: "sell",
         size: sellSize,
         clientOrderId: `ath-out-${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        orderType: DeltaOrderType.LIMIT,
+        limitPrice,
+        timeInForce: TimeInForce.GTC, // Good Till Cancelled for limit orders
         reduceOnly: true,
       });
       exitOrderId = String(order.id);

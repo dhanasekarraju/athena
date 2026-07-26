@@ -1,5 +1,19 @@
 import crypto from "node:crypto";
 
+export enum DeltaOrderType {
+  MARKET = "market_order",
+  LIMIT = "limit_order",
+  STOP_MARKET = "stop_market_order",
+  STOP_LIMIT = "stop_limit_order"
+}
+
+export enum TimeInForce {
+  IOC = "ioc",          // Immediate or Cancel
+  GTC = "gtc",          // Good Till Cancelled
+  FOK = "fok",          // Fill or Kill
+  GTX = "gtx"           // Good Till Crossing (post-only)
+}
+
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export interface DeltaTicker {
@@ -52,22 +66,45 @@ export class DeltaClient {
     private readonly baseUrl: string,
     private readonly apiKey: string,
     private readonly apiSecret: string,
+    private readonly maxRetries: number = 3,
+    private readonly baseDelayMs: number = 1000,
+    private readonly maxDelayMs: number = 30000,
   ) {}
 
   static fromEnv(env: {
     DELTA_BASE_URL: string;
     DELTA_API_KEY: string;
     DELTA_API_SECRET: string;
+    DELTA_MAX_RETRIES?: string;
+    DELTA_BASE_DELAY_MS?: string;
+    DELTA_MAX_DELAY_MS?: string;
   }): DeltaClient {
     return new DeltaClient(
       env.DELTA_BASE_URL.replace(/\/$/, ""),
       env.DELTA_API_KEY,
       env.DELTA_API_SECRET,
+      parseInt(env.DELTA_MAX_RETRIES ?? "3", 10),
+      parseInt(env.DELTA_BASE_DELAY_MS ?? "1000", 10),
+      parseInt(env.DELTA_MAX_DELAY_MS ?? "30000", 10),
     );
   }
 
   get configured(): boolean {
     return Boolean(this.apiKey && this.apiSecret);
+  }
+
+  private shouldRetry(statusCode: number): boolean {
+    // Retry on rate limit (429), timeout (408), and server errors (5xx)
+    return statusCode === 408 || statusCode === 429 || statusCode >= 500;
+  }
+
+  private calculateDelay(attempt: number): number {
+    // Exponential backoff with full jitter
+    const delay = Math.min(
+      this.baseDelayMs * Math.pow(2, attempt),
+      this.maxDelayMs
+    );
+    return Math.floor(Math.random() * delay);
   }
 
   private sign(method: HttpMethod, path: string, query: string, body: string, timestamp: string): string {
@@ -79,6 +116,7 @@ export class DeltaClient {
     method: HttpMethod,
     path: string,
     opts: { query?: Record<string, string>; body?: unknown; auth?: boolean } = {},
+    attempt = 0,
   ): Promise<T> {
     const queryEntries = Object.entries(opts.query ?? {}).filter(([, v]) => v !== undefined && v !== "");
     const queryString = queryEntries.length
@@ -101,19 +139,59 @@ export class DeltaClient {
       headers.signature = this.sign(method, path, queryString, body, timestamp);
     }
 
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: method === "GET" || method === "DELETE" ? undefined : body || undefined,
-    });
-    const json = (await res.json()) as { success?: boolean; result?: T; error?: { message?: string } };
-    if (!res.ok || json.success === false) {
-      const detail = json.error ? `: ${JSON.stringify(json.error).slice(0, 300)}` : "";
-      throw new Error(
-        json.error?.message || `Delta API ${method} ${path} failed (${res.status})${detail}`,
-      );
+    try {
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: method === "GET" || method === "DELETE" ? undefined : body || undefined,
+      });
+      const json = (await res.json()) as { success?: boolean; result?: T; error?: { message?: string } };
+      if (!res.ok || json.success === false) {
+        const detail = json.error ? `: ${JSON.stringify(json.error).slice(0, 300)}` : "";
+        const error = new Error(
+          json.error?.message || `Delta API ${method} ${path} failed (${res.status})${detail}`,
+        );
+
+        // Check if we should retry (rate limit or server errors)
+        if (this.shouldRetry(res.status) && attempt < this.maxRetries) {
+          const delay = this.calculateDelay(attempt);
+          console.warn({
+            attempt: attempt + 1,
+            maxRetries: this.maxRetries,
+            delayMs: delay,
+            status: res.status,
+            method,
+            path
+          }, `Retrying Delta API request after ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.request<T>(method, path, opts, attempt + 1);
+        }
+
+        throw error;
+      }
+      return json.result as T;
+    } catch (error) {
+      // Handle network errors
+      const err = error as Error;
+      if (attempt < this.maxRetries) {
+        // For fetch-related errors, we might want to retry
+        const errorStr = err.message.toLowerCase();
+        if (errorStr.includes('fetch') || errorStr.includes('network') || errorStr.includes('failed to fetch')) {
+          const delay = this.calculateDelay(attempt);
+          console.warn({
+            attempt: attempt + 1,
+            maxRetries: this.maxRetries,
+            delayMs: delay,
+            method,
+            path
+          }, `Retrying Delta API request after network error (${delay}ms)`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.request<T>(method, path, opts, attempt + 1);
+        }
+      }
+
+      throw error;
     }
-    return json.result as T;
   }
 
   async getOptionTickers(symbol: string, optionType: "call" | "put"): Promise<DeltaTicker[]> {
@@ -191,6 +269,70 @@ export class DeltaClient {
     return out;
   }
 
+  async placeOrder(input: {
+    productId: number;
+    productSymbol: string;
+    side: "buy" | "sell";
+    size: number;
+    clientOrderId: string;
+    reduceOnly?: boolean;
+    orderType?: DeltaOrderType;
+    limitPrice?: number;
+    timeInForce?: TimeInForce;
+    stopPrice?: number;
+  }): Promise<DeltaOrderResult> {
+    // Default to market order for backward compatibility
+    const orderType = input.orderType ?? DeltaOrderType.MARKET;
+    const timeInForce = input.timeInForce ?? TimeInForce.IOC;
+
+    // Validate parameters based on order type
+    if (
+      (orderType === DeltaOrderType.LIMIT || orderType === DeltaOrderType.STOP_LIMIT) &&
+      input.limitPrice === undefined
+    ) {
+      throw new Error("limitPrice is required for limit and stop-limit orders");
+    }
+
+    if (
+      (orderType === DeltaOrderType.STOP_MARKET || orderType === DeltaOrderType.STOP_LIMIT) &&
+      input.stopPrice === undefined
+    ) {
+      throw new Error("stopPrice is required for stop-market and stop-limit orders");
+    }
+
+    const body: any = {
+      product_id: input.productId,
+      product_symbol: input.productSymbol,
+      size: input.size,
+      side: input.side,
+      order_type: orderType,
+      time_in_force: timeInForce,
+      reduce_only: input.reduceOnly ?? false,
+      client_order_id: input.clientOrderId.slice(0, 36),
+    };
+
+    // Add price for limit orders
+    if (
+      (orderType === DeltaOrderType.LIMIT || orderType === DeltaOrderType.STOP_LIMIT) &&
+      input.limitPrice !== undefined
+    ) {
+      body.limit_price = String(input.limitPrice);
+    }
+
+    // Add stop price for stop orders
+    if (
+      (orderType === DeltaOrderType.STOP_MARKET || orderType === DeltaOrderType.STOP_LIMIT) &&
+      input.stopPrice !== undefined
+    ) {
+      body.stop_price = String(input.stopPrice);
+    }
+
+    return this.request<DeltaOrderResult>("POST", "/v2/orders", {
+      auth: true,
+      body: body,
+    });
+  }
+
   async placeMarketOrder(input: {
     productId: number;
     productSymbol: string;
@@ -199,18 +341,10 @@ export class DeltaClient {
     clientOrderId: string;
     reduceOnly?: boolean;
   }): Promise<DeltaOrderResult> {
-    return this.request<DeltaOrderResult>("POST", "/v2/orders", {
-      auth: true,
-      body: {
-        product_id: input.productId,
-        product_symbol: input.productSymbol,
-        size: input.size,
-        side: input.side,
-        order_type: "market_order",
-        time_in_force: "ioc",
-        reduce_only: input.reduceOnly ?? false,
-        client_order_id: input.clientOrderId.slice(0, 36),
-      },
+    return this.placeOrder({
+      ...input,
+      orderType: DeltaOrderType.MARKET,
+      timeInForce: TimeInForce.IOC,
     });
   }
 
