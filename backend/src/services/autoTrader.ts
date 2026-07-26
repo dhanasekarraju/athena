@@ -14,7 +14,7 @@ import { notifyBuy, notifySell, notifyTrade } from "./pushService.js";
 import { extractFilledSize, reconcileEntryFill } from "./orderFill.js";
 import { evaluateLiquidityGuard } from "./liquidityGuard.js";
 import { evaluateRegimeGuard } from "./regimeGuard.js";
-import { calculateLimitBuyPrice, calculateLimitSellPrice, calculateSlippageBps } from "../utils/tradingUtils.js";
+import { calculateLimitBuyPrice, calculateLimitSellPrice } from "../utils/tradingUtils.js";
 import {
   EXAM_MAX_DAILY_ENTRIES,
   EXAM_MAX_MARK_IV,
@@ -33,6 +33,18 @@ function defaultContractValue(symbol: string): number {
   if (u.includes("BTC")) return 0.001;
   if (u.includes("ETH")) return 0.01;
   return 1;
+}
+
+/** Parse C-ETH-1950-310726 / P-BTC-... into underlying + direction. */
+function parseProductSymbol(
+  productSymbol: string,
+): { underlying: string; direction: "BUY_CALL" | "BUY_PUT" } | null {
+  const m = productSymbol.toUpperCase().match(/^(C|P)-([A-Z0-9]+)-/);
+  if (!m) return null;
+  return {
+    underlying: m[2],
+    direction: m[1] === "C" ? "BUY_CALL" : "BUY_PUT",
+  };
 }
 
 function positionCostInr(
@@ -678,7 +690,7 @@ export class AutoTrader {
         "PAPER buy (no live order)",
       );
     } else {
-      // Calculate limit price with slippage protection for buying
+      // Limit + IOC: slippage-capped price, no resting GTC orphans on Delta.
       const ticker = await this.client.getTicker(selected.productSymbol);
       const limitPrice = calculateLimitBuyPrice(ticker, this.slippageBps);
 
@@ -690,7 +702,7 @@ export class AutoTrader {
         clientOrderId,
         orderType: DeltaOrderType.LIMIT,
         limitPrice,
-        timeInForce: TimeInForce.GTC, // Good Till Cancelled for limit orders
+        timeInForce: TimeInForce.IOC,
       });
       entryOrderId = String(order.id);
       fillPremium = Number(order.average_fill_price || limitPrice) || limitPrice;
@@ -702,13 +714,25 @@ export class AutoTrader {
       });
 
       if (!reconciled.ok) {
+        // Never leave a resting buy: cancel if still open (GTC leftover / IOC quirk).
+        const state = String(order.state ?? "").toLowerCase();
+        if (state === "open" || state.includes("pending") || filledFromOrder <= 0) {
+          try {
+            await this.client.cancelOrder({ orderId: entryOrderId, productId: selected.productId });
+            this.log.warn(
+              { orderId: entryOrderId, product: selected.productSymbol },
+              "Cancelled unfilled entry order",
+            );
+          } catch (err) {
+            this.log.warn({ err, orderId: entryOrderId }, "Cancel unfilled entry failed (may already be done)");
+          }
+        }
         // Unwind any short/bad fill still resting as a long on Delta.
         if (reconciled.fillSize > 0) {
           try {
             const unwindId = `ath-uw-${randomUUID().replace(/-/g, "").slice(0, 22)}`;
-            // Calculate limit price for unwinding (selling)
-            const ticker = await this.client.getTicker(selected.productSymbol);
-            const limitPrice = calculateLimitSellPrice(ticker, this.slippageBps);
+            const unwindTicker = await this.client.getTicker(selected.productSymbol);
+            const unwindPx = calculateLimitSellPrice(unwindTicker, this.slippageBps);
 
             await this.client.placeOrder({
               productId: selected.productId,
@@ -717,8 +741,8 @@ export class AutoTrader {
               size: reconciled.fillSize,
               clientOrderId: unwindId,
               orderType: DeltaOrderType.LIMIT,
-              limitPrice,
-              timeInForce: TimeInForce.IOC, // Immediate or Cancel for unwind
+              limitPrice: unwindPx,
+              timeInForce: TimeInForce.IOC,
               reduceOnly: true,
             });
             this.log.warn(
@@ -874,6 +898,16 @@ export class AutoTrader {
       } catch (err) {
         this.log.error({ err }, "Delta position sync failed");
       }
+      try {
+        await this.syncExternalOpens(cfg);
+      } catch (err) {
+        this.log.error({ err }, "Delta open-import sync failed");
+      }
+      try {
+        await this.cancelOrphanAthEntryOrders();
+      } catch (err) {
+        this.log.warn({ err }, "Orphan order cancel sweep failed");
+      }
     }
     const stillOpen = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
     for (const pos of stillOpen) {
@@ -924,6 +958,141 @@ export class AutoTrader {
         { symbol: pos.productSymbol, details: { mark, reason: "external_close" } },
       );
       await this.executeExit(pos, mark, "external_close", { skipExchangeOrder: true });
+    }
+  }
+
+  /**
+   * Import Delta longs that Athena does not have as OPEN (GTC orphan fills, manual buys).
+   * Creates tracked rows so SL/TP/trail and the phone book can see them.
+   */
+  private async syncExternalOpens(cfg: RuntimeBotConfig): Promise<void> {
+    const exchange = await this.client.getOpenMarginedPositions();
+    if (!exchange.length) return;
+
+    const athenaOpen = await this.prisma.botPosition.findMany({
+      where: { status: "OPEN", paper: false },
+      select: { productId: true, productSymbol: true, size: true },
+    });
+    const byProduct = new Map(athenaOpen.map((p) => [p.productId, p]));
+    const bySymbol = new Map(athenaOpen.map((p) => [p.productSymbol.toUpperCase(), p]));
+
+    const fx = await getUsdInrRate(this.log);
+    const usdInr = fx.rate;
+
+    for (const remote of exchange) {
+      const size = Math.abs(remote.size);
+      if (size <= 0) continue;
+      const existing =
+        byProduct.get(remote.productId) ?? bySymbol.get(remote.productSymbol.toUpperCase());
+      if (existing) {
+        // Size drift: Delta grew (stacked GTC fills) — bump Athena size to match.
+        if (Math.abs(existing.size - size) >= 1) {
+          await this.prisma.botPosition.updateMany({
+            where: {
+              status: "OPEN",
+              paper: false,
+              OR: [{ productId: remote.productId }, { productSymbol: remote.productSymbol }],
+            },
+            data: { size },
+          });
+          this.log.warn(
+            { product: remote.productSymbol, from: existing.size, to: size },
+            "Synced Athena OPEN size to Delta",
+          );
+          this.pushActivity(
+            "info",
+            `Synced size ${remote.productSymbol} ${existing.size}→${size} from Delta`,
+            { symbol: remote.productSymbol, details: { from: existing.size, to: size } },
+          );
+        }
+        continue;
+      }
+
+      const meta = parseProductSymbol(remote.productSymbol);
+      if (!meta) {
+        this.log.warn({ product: remote.productSymbol }, "Skip Delta import — unparseable symbol");
+        continue;
+      }
+      const entry = remote.entryPrice > 0 ? remote.entryPrice : 0;
+      if (entry <= 0) continue;
+
+      const levels = buildEntryLevels({
+        fillPremium: entry,
+        slFraction: cfg.slFraction,
+        tp1Fraction: cfg.tp1Fraction,
+      });
+      const cv = defaultContractValue(remote.productSymbol);
+      const costInr = contractCostUsd(entry, cv) * size * usdInr;
+
+      await this.prisma.botPosition.create({
+        data: {
+          exchange: "delta",
+          productId: remote.productId,
+          productSymbol: remote.productSymbol,
+          underlying: meta.underlying,
+          direction: meta.direction,
+          size,
+          entryPremium: entry,
+          stopLoss: levels.stopLoss,
+          takeProfit1: levels.takeProfit1,
+          status: "OPEN",
+          paper: false,
+          entryOrderId: `delta-sync-${remote.productId}`,
+          signalSnapshot: {
+            timeframe: "sync",
+            confidence: 0,
+            risk_level: "High",
+            importedFromDelta: true,
+            peakExitPx: entry,
+            originalSize: size,
+            selected: { contractValue: cv, productSymbol: remote.productSymbol },
+            planned: {
+              costInr,
+              contractValue: cv,
+              usdInr,
+              stopLoss: levels.stopLoss,
+              takeProfit1: levels.takeProfit1,
+              slFraction: cfg.slFraction,
+              tp1Fraction: cfg.tp1Fraction,
+            },
+          } as object,
+        },
+      });
+
+      this.pushActivity(
+        "trade",
+        `IMPORTED from Delta ${meta.direction} ${remote.productSymbol} ×${size} @ ${entry.toFixed(2)} (≈₹${costInr.toFixed(0)})`,
+        {
+          symbol: meta.underlying,
+          details: { product: remote.productSymbol, size, entry, costInr },
+        },
+      );
+      this.log.warn(
+        { product: remote.productSymbol, size, entry, costInr },
+        "Imported orphan Delta position into Athena OPEN",
+      );
+    }
+  }
+
+  /** Cancel leftover ath-in-* resting buys so GTC orphans cannot grow. */
+  private async cancelOrphanAthEntryOrders(): Promise<void> {
+    const openOrders = await this.client.getOpenOrders();
+    for (const o of openOrders) {
+      if (o.side !== "buy") continue;
+      if (!o.clientOrderId.startsWith("ath-in-")) continue;
+      try {
+        await this.client.cancelOrder({ orderId: o.id, productId: o.productId });
+        this.log.warn(
+          { orderId: o.id, product: o.productSymbol, clientOrderId: o.clientOrderId },
+          "Cancelled orphan ath-in resting buy",
+        );
+        this.pushActivity("info", `Cancelled resting buy ${o.productSymbol} #${o.id}`, {
+          symbol: o.productSymbol,
+          details: { orderId: o.id },
+        });
+      } catch (err) {
+        this.log.warn({ err, orderId: o.id }, "Failed cancelling orphan ath-in order");
+      }
     }
   }
 
@@ -1150,7 +1319,7 @@ export class AutoTrader {
         skipEx ? "External/sync close (no Delta sell)" : partial ? "PAPER partial sell" : "PAPER sell",
       );
     } else {
-      // Calculate limit price with slippage protection for selling
+      // Limit + IOC exits — never leave resting reduce-only GTCs.
       const ticker = await this.client.getTicker(pos.productSymbol);
       const limitPrice = calculateLimitSellPrice(ticker, this.slippageBps);
 
@@ -1162,13 +1331,22 @@ export class AutoTrader {
         clientOrderId: `ath-out-${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         orderType: DeltaOrderType.LIMIT,
         limitPrice,
-        timeInForce: TimeInForce.GTC, // Good Till Cancelled for limit orders
+        timeInForce: TimeInForce.IOC,
         reduceOnly: true,
       });
       exitOrderId = String(order.id);
+      const exitFilled = extractFilledSize(order);
+      if (exitFilled <= 0) {
+        try {
+          await this.client.cancelOrder({ orderId: exitOrderId, productId: pos.productId });
+        } catch {
+          /* already gone */
+        }
+        throw Object.assign(new Error(`Exit order unfilled (state=${order.state})`), { statusCode: 502 });
+      }
       this.log.info(
-        { exitOrderId, productSymbol: pos.productSymbol, mark, reason, sellSize, remaining },
-        partial ? "LIVE partial sell submitted" : "LIVE sell submitted",
+        { exitOrderId, productSymbol: pos.productSymbol, mark, reason, sellSize, remaining, exitFilled },
+        partial ? "LIVE partial sell filled" : "LIVE sell filled",
       );
     }
 

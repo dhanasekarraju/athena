@@ -1,6 +1,7 @@
 /**
- * Reconcile requested IOC size vs Delta order response.
- * IOC can partial-fill; never trust the request size for the DB position.
+ * Reconcile requested size vs Delta order response.
+ * Prefer IOC entries so unfilled size does not rest on the book.
+ * Never trust the request size for the DB position — use filled size.
  */
 export function reconcileEntryFill(input: {
   requestedSize: number;

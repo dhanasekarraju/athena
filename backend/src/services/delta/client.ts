@@ -269,6 +269,53 @@ export class DeltaClient {
     return out;
   }
 
+  /** Open (resting) orders. Optionally filter by product. */
+  async getOpenOrders(productId?: number): Promise<
+    Array<{ id: string; productId: number; productSymbol: string; side: string; size: number; unfilled: number; state: string; clientOrderId: string }>
+  > {
+    const query: Record<string, string> = { state: "open" };
+    if (productId != null) query.product_id = String(productId);
+    const result = await this.request<Array<Record<string, unknown>> | { [k: string]: Record<string, unknown> }>(
+      "GET",
+      "/v2/orders",
+      { auth: true, query },
+    );
+    const rows = Array.isArray(result) ? result : Object.values(result ?? {});
+    const out: Array<{
+      id: string;
+      productId: number;
+      productSymbol: string;
+      side: string;
+      size: number;
+      unfilled: number;
+      state: string;
+      clientOrderId: string;
+    }> = [];
+    for (const o of rows) {
+      const id = String(o.id ?? "");
+      if (!id) continue;
+      out.push({
+        id,
+        productId: toNum(o.product_id),
+        productSymbol: String(o.product_symbol ?? ""),
+        side: String(o.side ?? ""),
+        size: toNum(o.size),
+        unfilled: toNum(o.unfilled_size ?? o.size),
+        state: String(o.state ?? ""),
+        clientOrderId: String(o.client_order_id ?? ""),
+      });
+    }
+    return out;
+  }
+
+  /** Cancel a resting order. Safe no-op if already filled/cancelled. */
+  async cancelOrder(input: { orderId: string | number; productId: number }): Promise<void> {
+    await this.request("DELETE", "/v2/orders", {
+      auth: true,
+      body: { id: Number(input.orderId), product_id: input.productId },
+    });
+  }
+
   async placeOrder(input: {
     productId: number;
     productSymbol: string;
