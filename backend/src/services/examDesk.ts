@@ -18,3 +18,4 @@ export const EXAM_MIN_TREND_STRENGTH = 55;
 
 /** Paper 3: refuse buys when mark IV (decimal) is richer than this. */
 export const EXAM_MAX_MARK_IV = 0.95;
+

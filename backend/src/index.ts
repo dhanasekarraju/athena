@@ -42,7 +42,7 @@ async function main() {
   await app.register(coraiserRoutes);
   await app.register(liveWebsocket);
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error: Error & { statusCode?: number }, _request, reply) => {
     app.log.error(error);
     reply.code(error.statusCode ?? 500).send({
       error: error.message || "Internal Server Error",

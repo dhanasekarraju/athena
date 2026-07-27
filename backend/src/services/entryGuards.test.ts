@@ -10,10 +10,16 @@ import {
 } from "./entryGuards.js";
 
 describe("requiredConfidenceForSymbol", () => {
-  it("uses Settings minConfidence as-is for BTC and ETH", () => {
-    expect(requiredConfidenceForSymbol("BTC", 32)).toBe(32);
-    expect(requiredConfidenceForSymbol("ETH", 32)).toBe(32);
-    expect(requiredConfidenceForSymbol("ETH", 45)).toBe(45);
+  it("softens 5m bar: max(40, minConfidence - 5)", () => {
+    expect(requiredConfidenceForSymbol("BTC", 45, "5m")).toBe(40);
+    expect(requiredConfidenceForSymbol("ETH", 48, "5m")).toBe(43);
+    expect(requiredConfidenceForSymbol("BTC", 32, "5m")).toBe(40);
+  });
+
+  it("floors 15m+ at max(minConfidence, 45)", () => {
+    expect(requiredConfidenceForSymbol("BTC", 32, "15m")).toBe(45);
+    expect(requiredConfidenceForSymbol("ETH", 45, "15m")).toBe(45);
+    expect(requiredConfidenceForSymbol("BTC", 48, "15m")).toBe(48);
   });
 });
 
@@ -21,10 +27,10 @@ describe("evaluateEntryGuards", () => {
   const base = {
     symbol: "BTC",
     direction: "BUY_CALL",
-    confidence: 32,
+    confidence: 45,
     riskLevel: "High",
     timeframe: "15m",
-    minConfidence: 32,
+    minConfidence: 45,
     skipHighRisk: false,
   };
 
@@ -44,14 +50,43 @@ describe("evaluateEntryGuards", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("allows typical 32 / High risk when Settings allow it", () => {
+  it("allows 5m at softened bar (Settings 45 → need 40)", () => {
+    const r = evaluateEntryGuards({
+      ...base,
+      timeframe: "5m",
+      minConfidence: 45,
+      confidence: 40,
+      riskLevel: "Medium",
+    });
+    expect(r.ok).toBe(true);
+    expect(r.requiredConfidence).toBe(40);
+  });
+
+  it("blocks 5m below softened bar", () => {
+    const r = evaluateEntryGuards({
+      ...base,
+      timeframe: "5m",
+      minConfidence: 45,
+      confidence: 39,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.requiredConfidence).toBe(40);
+  });
+
+  it("allows 15m when conf meets floor 45", () => {
     const r = evaluateEntryGuards(base);
     expect(r.ok).toBe(true);
   });
 
-  it("blocks below Settings minConfidence", () => {
-    const r = evaluateEntryGuards({ ...base, confidence: 31 });
+  it("blocks 15m below floor even if Settings min is lower", () => {
+    const r = evaluateEntryGuards({
+      ...base,
+      minConfidence: 32,
+      confidence: 40,
+      timeframe: "15m",
+    });
     expect(r.ok).toBe(false);
+    expect(r.requiredConfidence).toBe(45);
   });
 
   it("honors skipHighRisk when enabled", () => {
@@ -67,7 +102,7 @@ describe("evaluateEntryGuards", () => {
   it("allows High risk when skipHighRisk is off", () => {
     const r = evaluateEntryGuards({
       ...base,
-      confidence: 32,
+      confidence: 45,
       riskLevel: "High",
       skipHighRisk: false,
     });
@@ -93,7 +128,7 @@ describe("evaluateEntryGuards", () => {
       ...base,
       direction: "BUY_PUT",
       lastStopLossAt: null,
-      confidence: 40,
+      confidence: 45,
     });
     expect(r.ok).toBe(true);
   });

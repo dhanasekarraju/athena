@@ -20,6 +20,7 @@ import {
   EXAM_MIN_TREND_STRENGTH,
   EXAM_RISK_PCT_OF_EQUITY,
 } from "./examDesk.js";
+import { sizeExamContracts } from "./examSizing.js";
 import {
   countTrailingStopLosses,
   evaluateCircuitBreaker,
@@ -605,29 +606,36 @@ export class AutoTrader {
     const costPerContractInr = costPerContractUsd * usdInr;
     if (costPerContractInr <= 0) return;
 
-    let budget = Math.min(cfg.maxOrderInr, room);
-    // Paper 2: size by equity risk fraction (micro-account aware).
-    let equityInr: number | null = null;
+    // Paper 2 + micro allow-one: 12% risk preferred; 1 lot OK if cash + ≤35% equity.
+    let equityInr = env.PAPER_BALANCE_INR;
+    let walletInr: number | null = paperMode ? equityInr : null;
     if (!paperMode) {
       try {
         const usdAvail = await this.client.getUsdAvailable();
         if (usdAvail != null) {
           equityInr = usdAvail * usdInr;
-          const riskBudget = equityInr * EXAM_RISK_PCT_OF_EQUITY;
-          budget = Math.min(budget, usdAvail * usdInr * 0.95, riskBudget);
+          walletInr = equityInr;
         }
       } catch (err) {
         this.log.warn({ err }, "Could not read wallet balance before sizing");
       }
-    } else {
-      equityInr = env.PAPER_BALANCE_INR;
-      budget = Math.min(budget, equityInr * EXAM_RISK_PCT_OF_EQUITY);
     }
-    const size = Math.floor(budget / costPerContractInr);
+
+    const sized = sizeExamContracts({
+      maxOrderInr: cfg.maxOrderInr,
+      exposureRoomInr: room,
+      walletInr,
+      equityInr,
+      costPerContractInr,
+    });
+    const size = sized.size;
+    const budget = sized.budget;
     if (size < 1) {
       this.pushActivity(
         "skip",
-        `${sym} skipped — 1× ${selected.productSymbol} ≈ ₹${costPerContractInr.toFixed(0)} > max ₹${budget}`,
+        `${sym} skipped — 1× ${selected.productSymbol} ≈ ₹${costPerContractInr.toFixed(0)} > max ₹${budget.toFixed(0)}${
+          sized.reason ? ` (${sized.reason})` : ""
+        }`,
         {
           symbol: sym,
           details: {
@@ -636,17 +644,35 @@ export class AutoTrader {
             costPerContractUsd,
             costPerContractInr,
             budget,
+            cashBudget: sized.cashBudget,
+            riskBudget: sized.riskBudget,
             equityInr,
             riskPct: EXAM_RISK_PCT_OF_EQUITY,
+            microAllowOne: sized.microAllowOne,
+            why: sized.reason,
             product: selected.productSymbol,
           },
         },
       );
       this.log.info(
-        { premium, costPerContractInr, budget, symbol: selected.productSymbol },
-        "Skip auto entry: 1 contract costs more than max order",
+        {
+          premium,
+          costPerContractInr,
+          budget,
+          cashBudget: sized.cashBudget,
+          riskBudget: sized.riskBudget,
+          why: sized.reason,
+          symbol: selected.productSymbol,
+        },
+        "Skip auto entry: 1 contract costs more than exam budget",
       );
       return;
+    }
+    if (sized.microAllowOne) {
+      this.log.info(
+        { product: selected.productSymbol, costPerContractInr, equityInr, budget },
+        "Exam micro allow-one lot (12% risk could not afford 1×)",
+      );
     }
 
     const notionalInr = size * costPerContractInr;

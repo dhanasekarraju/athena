@@ -68,13 +68,49 @@ export function sameDirectionCooldownMs(exitReason?: string | null): number {
 export const TIRED_MOVE_AGE_MS = 30 * 60 * 1000;
 export const TIRED_MOVE_MIN_REASONS = 3;
 
-export function requiredConfidenceForSymbol(_symbol: string, minConfidence: number): number {
-  return minConfidence;
+/** Floor for live 5m entries (options move faster than waiting for 15m@48). */
+export const EXAM_5M_MIN_CONFIDENCE = 40;
+
+/** Floor for live 15m+ entries. */
+export const EXAM_15M_MIN_CONFIDENCE = 45;
+
+function normalizeTf(timeframe?: string | null): string {
+  return String(timeframe ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
+export function isFiveMinuteTimeframe(timeframe?: string | null): boolean {
+  const t = normalizeTf(timeframe);
+  return t === "5m" || t === "5min" || t === "5";
+}
+
+/**
+ * Settings minConfidence, adjusted by timeframe:
+ * - 5m: max(40, minConfidence - 5) — slightly softer so tickets aren't always late
+ * - 15m+: max(minConfidence, 45)
+ * - other / unknown: minConfidence as-is
+ */
+export function requiredConfidenceForSymbol(
+  _symbol: string,
+  minConfidence: number,
+  timeframe?: string | null,
+): number {
+  const base = Math.max(0, Number(minConfidence) || 0);
+  if (isFiveMinuteTimeframe(timeframe)) {
+    return Math.max(EXAM_5M_MIN_CONFIDENCE, base - 5);
+  }
+  const t = normalizeTf(timeframe);
+  if (t === "15m" || t === "15min" || t === "15" || t === "1h" || t === "4h") {
+    return Math.max(base, EXAM_15M_MIN_CONFIDENCE);
+  }
+  return base;
 }
 
 export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
   const sym = input.symbol.toUpperCase();
-  const required = requiredConfidenceForSymbol(sym, input.minConfidence);
+  const required = requiredConfidenceForSymbol(sym, input.minConfidence, input.timeframe);
   const now = input.nowMs ?? Date.now();
   const allow1m = input.allowOneMinuteEntry === true;
 
@@ -96,6 +132,7 @@ export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
         confidence: input.confidence,
         minConfidence: input.minConfidence,
         requiredConfidence: required,
+        timeframe: input.timeframe,
       },
     };
   }
