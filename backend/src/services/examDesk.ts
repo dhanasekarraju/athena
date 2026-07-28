@@ -4,7 +4,7 @@
  */
 
 /** Paper 1: max new live entries per IST calendar day. */
-export const EXAM_MAX_DAILY_ENTRIES = 3;
+export const EXAM_MAX_DAILY_ENTRIES = 6;
 
 /**
  * Paper 2: max premium outlay as fraction of equity per trade.
