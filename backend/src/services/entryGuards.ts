@@ -1,7 +1,8 @@
 /**
  * Soft entry filters for AutoTrader.
  * Confidence / High-risk stay under BotConfig (Settings UI).
- * Live exam desk blocks 1m entries unless allowOneMinuteEntry is true (paper).
+ * Live exam desk: only **5m** entries (1m too noisy, 15m too late for short options).
+ * Paper may re-enable 1m / 15m probes via allowOneMinuteEntry / allowSlowTimeframeEntry.
  */
 
 import { isOneMinuteTimeframe } from "./exitLogic.js";
@@ -16,6 +17,8 @@ export interface EntryGuardInput {
   skipHighRisk: boolean;
   /** When false (live exam), 1m entries are blocked. Paper may set true. */
   allowOneMinuteEntry?: boolean;
+  /** When false (live exam), 15m+ entries are blocked (too late vs 1m options). Paper may set true. */
+  allowSlowTimeframeEntry?: boolean;
   /** ISO timestamp of last stop_loss close on this underlying, if any */
   lastStopLossAt?: string | null;
   /** ISO timestamp of last close in the same direction (any exit reason) */
@@ -68,10 +71,10 @@ export function sameDirectionCooldownMs(exitReason?: string | null): number {
 export const TIRED_MOVE_AGE_MS = 30 * 60 * 1000;
 export const TIRED_MOVE_MIN_REASONS = 3;
 
-/** Floor for live 5m entries (options move faster than waiting for 15m@48). */
-export const EXAM_5M_MIN_CONFIDENCE = 40;
+/** Floor for live 5m entries — options need tickets that can still fire. */
+export const EXAM_5M_MIN_CONFIDENCE = 35;
 
-/** Floor for live 15m+ entries. */
+/** Soft floor if paper re-enables 15m+ probes. */
 export const EXAM_15M_MIN_CONFIDENCE = 45;
 
 function normalizeTf(timeframe?: string | null): string {
@@ -86,10 +89,16 @@ export function isFiveMinuteTimeframe(timeframe?: string | null): boolean {
   return t === "5m" || t === "5min" || t === "5";
 }
 
+/** 15m and slower — often late for short-premium options vs 1m flip. */
+export function isSlowTimeframe(timeframe?: string | null): boolean {
+  const t = normalizeTf(timeframe);
+  return t === "15m" || t === "15min" || t === "15" || t === "1h" || t === "4h" || t === "1d";
+}
+
 /**
  * Settings minConfidence, adjusted by timeframe:
- * - 5m: max(40, minConfidence - 5) — slightly softer so tickets aren't always late
- * - 15m+: max(minConfidence, 45)
+ * - 5m: max(35, minConfidence - 5)
+ * - 15m+ (paper only): max(minConfidence, 45)
  * - other / unknown: minConfidence as-is
  */
 export function requiredConfidenceForSymbol(
@@ -101,8 +110,7 @@ export function requiredConfidenceForSymbol(
   if (isFiveMinuteTimeframe(timeframe)) {
     return Math.max(EXAM_5M_MIN_CONFIDENCE, base - 5);
   }
-  const t = normalizeTf(timeframe);
-  if (t === "15m" || t === "15min" || t === "15" || t === "1h" || t === "4h") {
+  if (isSlowTimeframe(timeframe)) {
     return Math.max(base, EXAM_15M_MIN_CONFIDENCE);
   }
   return base;
@@ -113,6 +121,7 @@ export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
   const required = requiredConfidenceForSymbol(sym, input.minConfidence, input.timeframe);
   const now = input.nowMs ?? Date.now();
   const allow1m = input.allowOneMinuteEntry === true;
+  const allowSlow = input.allowSlowTimeframeEntry === true;
 
   if (!allow1m && isOneMinuteTimeframe(input.timeframe)) {
     return {
@@ -120,6 +129,15 @@ export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
       reason: "1m blocked on live exam desk",
       requiredConfidence: required,
       details: { timeframe: input.timeframe, allowOneMinuteEntry: false },
+    };
+  }
+
+  if (!allowSlow && isSlowTimeframe(input.timeframe)) {
+    return {
+      ok: false,
+      reason: "15m blocked on live exam desk — too late for options vs 1m",
+      requiredConfidence: required,
+      details: { timeframe: input.timeframe, allowSlowTimeframeEntry: false },
     };
   }
 

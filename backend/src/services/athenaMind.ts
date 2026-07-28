@@ -11,8 +11,8 @@ export const ATHENA_MIND = `
 - Goal: steady survival and learning — not get-rich-quick.
 
 ## Entries (exam desk — Papers 1–3)
-- Polls AI on 1m, 5m, 15m. Live buys: **no 1m entries** (paper may still probe). Prefer **5m** (softer bar) over late 15m.
-- Bar: Settings minConfidence; **5m** needs max(40, minConf−5); **15m+** needs max(minConf, 45). skipHighRisk from Settings; daily live entry cap 3 (IST).
+- Polls AI on 1m, 5m, 15m. Live buys: **5m only** (1m too noisy, **15m too late** vs 1m flips). Paper may still probe 1m/15m.
+- Bar: Settings minConfidence; **5m** needs max(35, minConf−5). Daily live entry cap 3 (IST).
 - Size: prefer ≤12% of equity; micro allow **1 lot** if cash allows and cost ≤35% equity (and maxOrder / room).
 - Gemini trend judge (failover: OpenRouter free models): CALL needs up, PUT needs down; chop blocks. Strength ≥55; need 5m or 15m frame when LLM frames exist.
 - Regime: OI ≥ minOpenInterest; refuse mark IV > ~95% for buyers.

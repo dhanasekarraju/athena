@@ -270,6 +270,7 @@ export class AutoTrader {
       minConfidence: cfg.minConfidence,
       skipHighRisk: cfg.skipHighRisk,
       allowOneMinuteEntry: paperMode,
+      allowSlowTimeframeEntry: paperMode,
       lastStopLossAt: recentStop?.closedAt?.toISOString() ?? null,
       lastSameDirectionCloseAt: recentSameDir?.closedAt?.toISOString() ?? null,
       lastSameDirectionExitReason: recentSameDir?.exitReason ?? null,
