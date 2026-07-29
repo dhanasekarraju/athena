@@ -1,11 +1,7 @@
 /**
- * Soft entry filters for AutoTrader.
- * Confidence / High-risk stay under BotConfig (Settings UI).
- * Live exam desk: only **5m** entries (1m too noisy, 15m too late for short options).
- * Paper may re-enable 1m / 15m probes via allowOneMinuteEntry / allowSlowTimeframeEntry.
+ * Advisory-only entry metadata for AutoTrader — free mode.
+ * No strategy signal is rejected here.
  */
-
-import { isOneMinuteTimeframe } from "./exitLogic.js";
 
 export interface EntryGuardInput {
   symbol: string;
@@ -15,19 +11,14 @@ export interface EntryGuardInput {
   timeframe?: string | null;
   minConfidence: number;
   skipHighRisk: boolean;
-  /** When false (live exam), 1m entries are blocked. Paper may set true. */
+  /** Kept for API compat; live newborn always allows 1m. */
   allowOneMinuteEntry?: boolean;
-  /** When false (live exam), 15m+ entries are blocked (too late vs 1m options). Paper may set true. */
+  /** Kept for API compat; live newborn always allows 15m+. */
   allowSlowTimeframeEntry?: boolean;
-  /** ISO timestamp of last stop_loss close on this underlying, if any */
   lastStopLossAt?: string | null;
-  /** ISO timestamp of last close in the same direction (any exit reason) */
   lastSameDirectionCloseAt?: string | null;
-  /** Exit reason for that close — loss exits wait longer (options move fast). */
   lastSameDirectionExitReason?: string | null;
-  /** Ms since this direction first appeared at entry-grade confidence */
   directionAgeMs?: number | null;
-  /** Count of AI reason strings on the live signal */
   reasonCount?: number;
   nowMs?: number;
 }
@@ -39,193 +30,63 @@ export interface EntryGuardResult {
   details?: Record<string, unknown>;
 }
 
-/**
- * 1m live entries blocked on exam desk (allowOneMinuteEntry=false).
- * Paper may re-enable probes. @deprecated empty set unused — see allowOneMinuteEntry.
- */
+/** @deprecated unused in newborn mode */
 export const BLOCKED_ENTRY_TIMEFRAMES = new Set<string>();
 
-/**
- * Wait after a stop-loss before re-entering the *same direction* on that coin.
- * Opposite side stays free (CALL SL → PUT can fire immediately on flip).
- * 5m — crypto options momentum fades fast; Gemini still gates the re-entry.
- */
-export const STOP_LOSS_COOLDOWN_MS = 5 * 60 * 1000;
+/** Compat exports: cooldowns are disabled in free mode. */
+export const STOP_LOSS_COOLDOWN_MS = 0;
 
-/** After a win/trail/BE on this direction — brief pause, don't double-tap. */
-export const SAME_DIRECTION_COOLDOWN_WIN_MS = 5 * 60 * 1000;
-
-/** After stop_loss on this direction — same short pause; momentum check happens next. */
-export const SAME_DIRECTION_COOLDOWN_LOSS_MS = 5 * 60 * 1000;
-
-/** @deprecated use sameDirectionCooldownMs() */
+export const SAME_DIRECTION_COOLDOWN_WIN_MS = 0;
+export const SAME_DIRECTION_COOLDOWN_LOSS_MS = 0;
 export const SAME_DIRECTION_COOLDOWN_MS = SAME_DIRECTION_COOLDOWN_LOSS_MS;
 
-export function sameDirectionCooldownMs(exitReason?: string | null): number {
-  return exitReason === "stop_loss"
-    ? SAME_DIRECTION_COOLDOWN_LOSS_MS
-    : SAME_DIRECTION_COOLDOWN_WIN_MS;
+export function sameDirectionCooldownMs(_exitReason?: string | null): number {
+  return SAME_DIRECTION_COOLDOWN_LOSS_MS;
 }
 
-/** Extended moves need more than MACD+EMA — require this many AI reasons. */
-export const TIRED_MOVE_AGE_MS = 30 * 60 * 1000;
-export const TIRED_MOVE_MIN_REASONS = 3;
+/** Effectively off — newborn does not block "tired" moves. */
+export const TIRED_MOVE_AGE_MS = 24 * 60 * 60 * 1000;
+export const TIRED_MOVE_MIN_REASONS = 1;
 
-/** Floor for live 5m entries — options need tickets that can still fire. */
-export const EXAM_5M_MIN_CONFIDENCE = 35;
+/** Compat exports — no longer used as hard floors. */
+export const EXAM_5M_MIN_CONFIDENCE = 0;
+export const EXAM_15M_MIN_CONFIDENCE = 0;
 
-/** Soft floor if paper re-enables 15m+ probes. */
-export const EXAM_15M_MIN_CONFIDENCE = 45;
-
-function normalizeTf(timeframe?: string | null): string {
-  return String(timeframe ?? "")
+export function isFiveMinuteTimeframe(timeframe?: string | null): boolean {
+  const t = String(timeframe ?? "")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "");
-}
-
-export function isFiveMinuteTimeframe(timeframe?: string | null): boolean {
-  const t = normalizeTf(timeframe);
   return t === "5m" || t === "5min" || t === "5";
 }
 
-/** 15m and slower — often late for short-premium options vs 1m flip. */
 export function isSlowTimeframe(timeframe?: string | null): boolean {
-  const t = normalizeTf(timeframe);
+  const t = String(timeframe ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
   return t === "15m" || t === "15min" || t === "15" || t === "1h" || t === "4h" || t === "1d";
 }
 
-/**
- * Settings minConfidence, adjusted by timeframe:
- * - 5m: max(35, minConfidence - 5)
- * - 15m+ (paper only): max(minConfidence, 45)
- * - other / unknown: minConfidence as-is
- */
+/** Newborn: Settings minConfidence only — no TF floors. */
 export function requiredConfidenceForSymbol(
   _symbol: string,
   minConfidence: number,
-  timeframe?: string | null,
+  _timeframe?: string | null,
 ): number {
-  const base = Math.max(0, Number(minConfidence) || 0);
-  if (isFiveMinuteTimeframe(timeframe)) {
-    return Math.max(EXAM_5M_MIN_CONFIDENCE, base - 5);
-  }
-  if (isSlowTimeframe(timeframe)) {
-    return Math.max(base, EXAM_15M_MIN_CONFIDENCE);
-  }
-  return base;
+  return Math.max(0, Number(minConfidence) || 0);
 }
 
 export function evaluateEntryGuards(input: EntryGuardInput): EntryGuardResult {
-  const sym = input.symbol.toUpperCase();
-  const required = requiredConfidenceForSymbol(sym, input.minConfidence, input.timeframe);
-  const now = input.nowMs ?? Date.now();
-  const allow1m = input.allowOneMinuteEntry === true;
-  const allowSlow = input.allowSlowTimeframeEntry === true;
-
-  if (!allow1m && isOneMinuteTimeframe(input.timeframe)) {
-    return {
-      ok: false,
-      reason: "1m blocked on live exam desk",
-      requiredConfidence: required,
-      details: { timeframe: input.timeframe, allowOneMinuteEntry: false },
-    };
-  }
-
-  if (!allowSlow && isSlowTimeframe(input.timeframe)) {
-    return {
-      ok: false,
-      reason: "15m blocked on live exam desk — too late for options vs 1m",
-      requiredConfidence: required,
-      details: { timeframe: input.timeframe, allowSlowTimeframeEntry: false },
-    };
-  }
-
-  if (input.confidence < required) {
-    return {
-      ok: false,
-      reason: `confidence ${input.confidence} < required ${required}`,
-      requiredConfidence: required,
-      details: {
-        confidence: input.confidence,
-        minConfidence: input.minConfidence,
-        requiredConfidence: required,
-        timeframe: input.timeframe,
-      },
-    };
-  }
-
-  if (input.skipHighRisk && input.riskLevel === "High") {
-    return {
-      ok: false,
-      reason: "High risk filter",
-      requiredConfidence: required,
-      details: {
-        risk_level: input.riskLevel,
-        skipHighRisk: input.skipHighRisk,
-      },
-    };
-  }
-
-  if (input.lastStopLossAt) {
-    const last = Date.parse(input.lastStopLossAt);
-    if (Number.isFinite(last) && now - last < STOP_LOSS_COOLDOWN_MS) {
-      const remainMin = Math.ceil((STOP_LOSS_COOLDOWN_MS - (now - last)) / 60000);
-      return {
-        ok: false,
-        reason: `stop-loss cooldown (${remainMin}m left)`,
-        requiredConfidence: required,
-        details: {
-          lastStopLossAt: input.lastStopLossAt,
-          cooldownMs: STOP_LOSS_COOLDOWN_MS,
-          remainMin,
-        },
-      };
-    }
-  }
-
-  if (input.lastSameDirectionCloseAt) {
-    const last = Date.parse(input.lastSameDirectionCloseAt);
-    const cooldownMs = sameDirectionCooldownMs(input.lastSameDirectionExitReason);
-    if (Number.isFinite(last) && now - last < cooldownMs) {
-      const remainMin = Math.ceil((cooldownMs - (now - last)) / 60000);
-      const kind = input.lastSameDirectionExitReason === "stop_loss" ? "after SL" : "after close";
-      return {
-        ok: false,
-        reason: `same-direction cooldown (${remainMin}m left, ${kind})`,
-        requiredConfidence: required,
-        details: {
-          lastSameDirectionCloseAt: input.lastSameDirectionCloseAt,
-          exitReason: input.lastSameDirectionExitReason,
-          cooldownMs,
-          remainMin,
-        },
-      };
-    }
-  }
-
-  // No hard max on direction age — long trends can still be tradeable.
-  // Weak MACD-only signals on tired moves still need ≥3 reasons (below).
-
-  const reasons = input.reasonCount ?? 0;
-  if (
-    input.directionAgeMs != null &&
-    input.directionAgeMs > TIRED_MOVE_AGE_MS &&
-    reasons < TIRED_MOVE_MIN_REASONS
-  ) {
-    const ageMin = Math.round(input.directionAgeMs / 60000);
-    return {
-      ok: false,
-      reason: `weak signal on tired move (${reasons} reasons, ${ageMin}m active)`,
-      requiredConfidence: required,
-      details: {
-        directionAgeMs: input.directionAgeMs,
-        reasonCount: reasons,
-        minReasons: TIRED_MOVE_MIN_REASONS,
-        ageMin,
-      },
-    };
-  }
-
-  return { ok: true, requiredConfidence: required };
+  const required = requiredConfidenceForSymbol(input.symbol, input.minConfidence, input.timeframe);
+  return {
+    ok: true,
+    requiredConfidence: required,
+    details: {
+      advisoryOnly: true,
+      confidence: input.confidence,
+      riskLevel: input.riskLevel,
+      timeframe: input.timeframe,
+    },
+  };
 }

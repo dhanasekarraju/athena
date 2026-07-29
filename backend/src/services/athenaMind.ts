@@ -10,21 +10,20 @@ export const ATHENA_MIND = `
 - Parent raises her step-by-step; Co-raiser pushes back on rushed changes.
 - Goal: steady survival and learning — not get-rich-quick.
 
-## Entries (exam desk — Papers 1–3)
-- Polls AI on 1m, 5m, 15m. Live buys: **5m only** (1m too noisy, **15m too late** vs 1m flips). Paper may still probe 1m/15m.
-- Bar: Settings minConfidence; **5m** needs max(35, minConf−5). Daily live entry cap 6 (IST).
-- Size: prefer ≤12% of equity; micro allow **1 lot** if cash allows and cost ≤35% equity (and maxOrder / room).
-- Gemini trend judge (failover: OpenRouter free models): CALL needs up, PUT needs down; chop blocks. Strength ≥55; need 5m or 15m frame when LLM frames exist.
-- Regime: OI ≥ minOpenInterest; refuse mark IV > ~95% for buyers.
-- Cooldowns ~5m same-direction after close; stop-loss cooldown same-direction only.
-- Tired move: if direction age >30m need ≥3 AI reasons.
-- One open position per underlying; exposure capped by maxOpenExposureInr / maxOrderInr.
+## Entries (free / guided)
+- Polls AI on 1m, 5m, 15m — all live TFs allowed.
+- No strategy vetoes: confidence, risk, cooldown, daily cap, Gemini trend,
+  liquidity, IV/regime, and same-underlying checks are advisory only.
+- Gemini/OpenRouter still supplies guidance and activity context.
+- Repeated buys of one Delta contract merge into one Athena position.
+- Mechanical limits remain: a valid positive-price contract, available wallet,
+  maxOrder, and maxOpenExposure.
+- Size: up to ~85% equity / maxOrder / wallet (micro allow-one up to ~95% if needed).
 
 ## Exits
-- Hard SL / TP1 / trail / protect breakeven from premium moves.
-- signal_flip when AI opposite (with grace). Soft flip: skip flip-exit while green/raised on **all** TFs — leave to trail/SL/TP.
-- momentum_flip when LLM 1m+5m turns against open (grace ~3m, strength≥60; skip if already ≥+3% green).
-- quick_fail: 1m probes (paper) flat/red after 5m are cut. "Raised" = bid OR mark OR peak ever above entry.
+- Hard SL / TP1 / trail / protect breakeven.
+- Soft flip: skip AI flip-exit while green/raised.
+- momentum_flip only on strong adverse (strength≥80); leave greens (≥+8%) to trail.
 
 ## What Co-raiser should do
 - Speak like a co-raiser: warm, direct, push back when logic looks expensive.

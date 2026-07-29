@@ -1,21 +1,19 @@
 /**
- * Exam desk constants — Paper 1–3 for Athena long-premium survival.
- * Tuned for small live capital (~₹1–2k): fewer tickets, capped daily bleed.
+ * Newborn desk — free to trade within wallet / maxOrder.
+ * Parent asked for fresh start: no tight 6/35 exam bars.
  */
 
-/** Paper 1: max new live entries per IST calendar day. */
-export const EXAM_MAX_DAILY_ENTRIES = 6;
+/** Soft daily spray cap (high). 0 would disable — keep a ceiling for accidents. */
+export const EXAM_MAX_DAILY_ENTRIES = 40;
 
 /**
- * Paper 2: max premium outlay as fraction of equity per trade.
- * Micro accounts cannot use classic 1–2% (one contract often costs more) —
- * 12% of equity with daily loss + entry caps still protects the book.
+ * Prefer up to this fraction of equity per ticket; cash + maxOrder still bind.
+ * Near 1.0 ≈ use almost full free wallet for one ticket on micro accounts.
  */
-export const EXAM_RISK_PCT_OF_EQUITY = 0.12;
+export const EXAM_RISK_PCT_OF_EQUITY = 0.85;
 
-/** Paper 1: minimum Gemini strength when judge is available (also in regime). */
-export const EXAM_MIN_TREND_STRENGTH = 55;
+/** Soft trend strength when Gemini is live (was 55). */
+export const EXAM_MIN_TREND_STRENGTH = 35;
 
-/** Paper 3: refuse buys when mark IV (decimal) is richer than this. */
-export const EXAM_MAX_MARK_IV = 0.95;
-
+/** Soft IV ceiling for buyers. */
+export const EXAM_MAX_MARK_IV = 1.2;

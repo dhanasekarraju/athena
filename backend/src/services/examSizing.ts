@@ -5,8 +5,8 @@
 
 import { EXAM_RISK_PCT_OF_EQUITY } from "./examDesk.js";
 
-/** Max share of equity for a single micro allow-one ticket (35%). */
-export const EXAM_MICRO_MAX_SINGLE_PCT = 0.35;
+/** Max share of equity for a single micro allow-one ticket. */
+export const EXAM_MICRO_MAX_SINGLE_PCT = 0.95;
 
 export interface ExamSizeInput {
   maxOrderInr: number;

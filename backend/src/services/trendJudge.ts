@@ -130,7 +130,7 @@ export function verdictAllows(
 }
 
 /** Min LLM strength to cut an open position on adverse 1m+5m momentum. */
-export const MOMENTUM_EXIT_MIN_STRENGTH = 60;
+export const MOMENTUM_EXIT_MIN_STRENGTH = 80;
 
 /** Don't momentum-exit in the first minutes — let fill + first ticks settle. */
 export const MOMENTUM_EXIT_GRACE_MS = 3 * 60 * 1000;
@@ -139,7 +139,7 @@ export const MOMENTUM_EXIT_GRACE_MS = 3 * 60 * 1000;
  * If already this far green, leave to trail/TP — momentum exit is for cutting
  * losers early (fees are the same at −₹50 or −₹200).
  */
-export const MOMENTUM_EXIT_MAX_GREEN = 0.03;
+export const MOMENTUM_EXIT_MAX_GREEN = 0.08;
 
 /**
  * Should we exit an open long because 1m+5m turned against us?

@@ -3,8 +3,8 @@ import { EXAM_RISK_PCT_OF_EQUITY } from "./examDesk.js";
 import { EXAM_MICRO_MAX_SINGLE_PCT, sizeExamContracts } from "./examSizing.js";
 
 describe("sizeExamContracts", () => {
-  it("sizes multiple lots under 12% risk when affordable", () => {
-    // equity 10000 → risk 1200; cost 100 → size 12
+  it("sizes multiple lots under risk + cash when affordable", () => {
+    // equity 10000 → risk 8500; cashBudget min(5000,5000,9500)=5000; cost 100 → size 50
     const r = sizeExamContracts({
       maxOrderInr: 5000,
       exposureRoomInr: 5000,
@@ -12,23 +12,23 @@ describe("sizeExamContracts", () => {
       equityInr: 10000,
       costPerContractInr: 100,
     });
-    expect(r.size).toBe(12);
+    expect(r.size).toBe(50);
     expect(r.microAllowOne).toBe(false);
     expect(r.riskBudget).toBeCloseTo(10000 * EXAM_RISK_PCT_OF_EQUITY);
   });
 
-  it("micro allow-one when 12% cannot afford 1 lot but cash + 35% equity can", () => {
-    // equity 500 → risk 60; ETH lot 80; cash plenty
+  it("micro allow-one when risk cannot afford 1 lot but cash + micro pct can", () => {
+    // equity 500 → risk 425 (85%); cost 80 → preferred sizes normally
+    // tighter case: equity 200, risk 170, cost 180 → allow-one if cash ok and ≤95%
     const r = sizeExamContracts({
       maxOrderInr: 1000,
       exposureRoomInr: 2000,
       walletInr: 500,
-      equityInr: 500,
-      costPerContractInr: 80,
+      equityInr: 200,
+      costPerContractInr: 180,
     });
     expect(r.size).toBe(1);
     expect(r.microAllowOne).toBe(true);
-    expect(80).toBeLessThanOrEqual(500 * EXAM_MICRO_MAX_SINGLE_PCT);
   });
 
   it("refuses when 1 lot exceeds cash budget", () => {
@@ -43,17 +43,16 @@ describe("sizeExamContracts", () => {
     expect(r.reason).toMatch(/cash budget/i);
   });
 
-  it("refuses when 1 lot exceeds 35% equity even if cash allows", () => {
-    // equity 200 → 35% = 70; cost 100; wallet 1000
+  it("refuses when 1 lot exceeds micro equity pct even if cash allows", () => {
     const r = sizeExamContracts({
       maxOrderInr: 1000,
       exposureRoomInr: 2000,
       walletInr: 1000,
-      equityInr: 200,
-      costPerContractInr: 100,
+      equityInr: 100,
+      costPerContractInr: 99,
+      microMaxSinglePct: 0.5,
     });
     expect(r.size).toBe(0);
-    expect(r.reason).toMatch(/35% equity|equity/i);
   });
 
   it("respects maxOrder and exposure room for preferred sizing", () => {

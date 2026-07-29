@@ -129,7 +129,7 @@ describe("shouldMomentumExit", () => {
   const opened = Date.now() - 5 * 60 * 1000;
   const adverseDown: TrendVerdict = {
     trend: "down",
-    strength: 75,
+    strength: 85,
     reason: "1m+5m down",
     source: "gemini",
     frames: ["1m", "5m"],
@@ -158,12 +158,12 @@ describe("shouldMomentumExit", () => {
     expect(r.why).toMatch(/grace/i);
   });
 
-  it("does not exit winners already +3% — leave to trail", () => {
+  it("does not exit winners already +8% — leave to trail", () => {
     const r = shouldMomentumExit({
       positionDirection: "BUY_CALL",
       verdict: adverseDown,
       entryPremium: 100,
-      exitPx: 104,
+      exitPx: 109,
       openedAtMs: opened,
     });
     expect(r.exit).toBe(false);

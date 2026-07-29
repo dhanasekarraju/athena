@@ -5,21 +5,13 @@ import { env } from "../utils/env.js";
 import { DeltaClient } from "./delta/client.js";
 import { selectDeltaOption, contractCostUsd } from "./delta/selectOption.js";
 import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
-import { evaluateEntryGuards, SAME_DIRECTION_COOLDOWN_LOSS_MS, STOP_LOSS_COOLDOWN_MS } from "./entryGuards.js";
-import { getDirectionAgeMs } from "./signalFreshness.js";
+import { evaluateEntryGuards } from "./entryGuards.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
-import { buildEntryLevels, decideLongExit, isOneMinuteTimeframe, probeHasRaised, shouldQuickFailExit } from "./exitLogic.js";
-import { getTrendVerdict, shouldMomentumExit, verdictAllows, isTrendJudgeLive } from "./trendJudge.js";
+import { buildEntryLevels, decideLongExit, probeHasRaised, shouldQuickFailExit } from "./exitLogic.js";
+import { getTrendVerdict, shouldMomentumExit, isTrendJudgeLive } from "./trendJudge.js";
 import { notifyBuy, notifySell, notifyTrade } from "./pushService.js";
 import { extractFilledSize, reconcileEntryFill } from "./orderFill.js";
-import { evaluateLiquidityGuard } from "./liquidityGuard.js";
-import { evaluateRegimeGuard } from "./regimeGuard.js";
-import {
-  EXAM_MAX_DAILY_ENTRIES,
-  EXAM_MAX_MARK_IV,
-  EXAM_MIN_TREND_STRENGTH,
-  EXAM_RISK_PCT_OF_EQUITY,
-} from "./examDesk.js";
+import { EXAM_RISK_PCT_OF_EQUITY } from "./examDesk.js";
 import { sizeExamContracts } from "./examSizing.js";
 import {
   countTrailingStopLosses,
@@ -33,6 +25,18 @@ function defaultContractValue(symbol: string): number {
   if (u.includes("BTC")) return 0.001;
   if (u.includes("ETH")) return 0.01;
   return 1;
+}
+
+/** Parse C-ETH-1950-310726 / P-BTC-... into underlying + direction. */
+function parseProductSymbol(
+  productSymbol: string,
+): { underlying: string; direction: "BUY_CALL" | "BUY_PUT" } | null {
+  const m = productSymbol.toUpperCase().match(/^(C|P)-([A-Z0-9]+)-/);
+  if (!m) return null;
+  return {
+    underlying: m[2],
+    direction: m[1] === "C" ? "BUY_CALL" : "BUY_PUT",
+  };
 }
 
 function positionCostInr(
@@ -209,10 +213,6 @@ export class AutoTrader {
       return;
     }
 
-    // Account-wide loss circuit breaker (IST day + consecutive SLs).
-    const tripped = await this.checkCircuitBreaker(cfg);
-    if (tripped) return;
-
     if (!cfg.symbols.includes(sym)) {
       this.pushActivity("skip", `${sym} skipped — not in bot symbols`, {
         symbol: sym,
@@ -220,47 +220,6 @@ export class AutoTrader {
       });
       return;
     }
-    if (signal.insufficient_data) {
-      this.pushActivity("skip", `${sym} skipped — insufficient data`, { symbol: sym });
-      this.log.info({ symbol: signal.symbol }, "Skip auto entry: insufficient data");
-      return;
-    }
-
-    const paperMode = cfg.paperTrading || !this.client.configured;
-    const nowMs = Date.now();
-    // SL cooldown is same-direction only. CALL stop → PUT may enter immediately
-    // (flip is the thesis); same-side revenge is what we pause.
-    const recentStop = await this.prisma.botPosition.findFirst({
-      where: {
-        underlying: sym,
-        direction: signal.direction,
-        status: "CLOSED",
-        exitReason: "stop_loss",
-        paper: paperMode,
-        closedAt: { gte: new Date(nowMs - STOP_LOSS_COOLDOWN_MS) },
-      },
-      orderBy: { closedAt: "desc" },
-      select: { closedAt: true },
-    });
-    const recentSameDir = await this.prisma.botPosition.findFirst({
-      where: {
-        underlying: sym,
-        direction: signal.direction,
-        status: "CLOSED",
-        paper: paperMode,
-        closedAt: { gte: new Date(nowMs - SAME_DIRECTION_COOLDOWN_LOSS_MS) },
-      },
-      orderBy: { closedAt: "desc" },
-      select: { closedAt: true, exitReason: true },
-    });
-    const directionAgeMs = await getDirectionAgeMs(
-      this.prisma,
-      sym,
-      signal.direction,
-      cfg.minConfidence,
-      nowMs,
-    );
-
     const guard = evaluateEntryGuards({
       symbol: sym,
       direction: signal.direction,
@@ -269,14 +228,9 @@ export class AutoTrader {
       timeframe: signal.timeframe,
       minConfidence: cfg.minConfidence,
       skipHighRisk: cfg.skipHighRisk,
-      allowOneMinuteEntry: paperMode,
-      allowSlowTimeframeEntry: paperMode,
-      lastStopLossAt: recentStop?.closedAt?.toISOString() ?? null,
-      lastSameDirectionCloseAt: recentSameDir?.closedAt?.toISOString() ?? null,
-      lastSameDirectionExitReason: recentSameDir?.exitReason ?? null,
-      directionAgeMs,
+      allowOneMinuteEntry: true,
+      allowSlowTimeframeEntry: true,
       reasonCount: signal.reasons?.length ?? 0,
-      nowMs,
     });
     if (!guard.ok) {
       this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${guard.reason}`, {
@@ -436,52 +390,7 @@ export class AutoTrader {
       this.log.info({ openExposure, room }, "Skip auto entry: exposure limit reached");
       return;
     }
-    if (open.some((p) => p.underlying === sym)) {
-      this.pushActivity("skip", `${sym} skipped — already open on underlying`, { symbol: sym });
-      this.log.info({ symbol: signal.symbol }, "Skip auto entry: already open on underlying");
-      return;
-    }
-
-    // Paper 1: daily entry cap (IST) — exam desk, not random spray.
-    if (!paperMode) {
-      const dayStart = startOfIstTradingDay();
-      const openedToday = await this.prisma.botPosition.count({
-        where: {
-          paper: false,
-          openedAt: { gte: dayStart },
-        },
-      });
-      if (openedToday >= EXAM_MAX_DAILY_ENTRIES) {
-        this.pushActivity(
-          "skip",
-          `${sym} skipped — daily entry cap ${EXAM_MAX_DAILY_ENTRIES} (exam desk)`,
-          { symbol: sym, details: { openedToday, cap: EXAM_MAX_DAILY_ENTRIES } },
-        );
-        this.log.info({ openedToday, cap: EXAM_MAX_DAILY_ENTRIES }, "Skip auto entry: daily cap");
-        return;
-      }
-    }
-
-    // Gemini trend judge: entry must agree with the higher-level trend; chop blocks.
-    // After an opposite-side stop-loss, require 1m+5m aligned (flip on clear reverse).
-    // 1m probe entries always require 1m+5m + Gemini available (fail-closed — noisy TF).
-    // Other TFs fail-open if the judge is unavailable.
-    const oppositeDir = signal.direction === "BUY_CALL" ? "BUY_PUT" : "BUY_CALL";
-    const recentOppositeStop = await this.prisma.botPosition.findFirst({
-      where: {
-        underlying: sym,
-        direction: oppositeDir,
-        status: "CLOSED",
-        exitReason: "stop_loss",
-        paper: paperMode,
-        closedAt: { gte: new Date(Date.now() - 90 * 60 * 1000) },
-      },
-      orderBy: { closedAt: "desc" },
-      select: { closedAt: true, direction: true },
-    });
-    const flipAfterSl = recentOppositeStop != null;
-    const is1mProbe = isOneMinuteTimeframe(signal.timeframe);
-
+    // Gemini guides and reports; it no longer vetoes an entry.
     const verdict = await getTrendVerdict(sym, this.log);
     if (isTrendJudgeLive(verdict.source)) {
       void publishBotFeed(this.prisma, this.log, {
@@ -493,50 +402,10 @@ export class AutoTrader {
         score: verdict.strength,
       });
     }
-    if (is1mProbe && !isTrendJudgeLive(verdict.source)) {
-      this.pushActivity("skip", `${sym} 1m probe skipped — trend judge unavailable`, {
-        symbol: sym,
-        details: { timeframe: signal.timeframe, confidence: signal.confidence },
-      });
-      this.log.info({ symbol: sym, timeframe: signal.timeframe }, "Skip 1m entry: trend judge unavailable");
-      return;
-    }
-    const trendGate = verdictAllows(signal.direction as "BUY_CALL" | "BUY_PUT", verdict, {
-      requireCoreFrames: flipAfterSl || is1mProbe,
-    });
-    if (!trendGate.ok) {
-      this.pushActivity("skip", `${sym} ${signal.direction} skipped — ${trendGate.why}`, {
-        symbol: sym,
-        details: {
-          trend: verdict.trend,
-          strength: verdict.strength,
-          reason: verdict.reason,
-          frames: verdict.frames,
-          flipAfterSl,
-          is1mProbe,
-          confidence: signal.confidence,
-        },
-      });
-      this.log.info(
-        { symbol: sym, direction: signal.direction, verdict, flipAfterSl, is1mProbe },
-        "Skip auto entry: trend judge",
-      );
-      return;
-    }
-    if (flipAfterSl) {
-      this.pushActivity(
-        "info",
-        `${sym} ${signal.direction} flip after ${oppositeDir} SL — 1m+5m ok`,
-        {
-          symbol: sym,
-          details: {
-            oppositeStopAt: recentOppositeStop.closedAt?.toISOString(),
-            frames: verdict.frames,
-            strength: verdict.strength,
-          },
-        },
-      );
-    }
+    this.log.info(
+      { symbol: sym, direction: signal.direction, verdict, confidence: signal.confidence },
+      "Gemini guidance recorded — entry gates disabled",
+    );
 
     const optionType = signal.direction === "BUY_CALL" ? "call" : "put";
     const tickers = await this.client.getOptionTickers(signal.symbol, optionType);
@@ -550,49 +419,17 @@ export class AutoTrader {
       return;
     }
 
-    const liq = evaluateLiquidityGuard({
-      bid: selected.bid,
-      ask: selected.ask,
-      mark: selected.markPremium,
-      openInterest: selected.openInterest,
-      maxSpreadPct: cfg.maxSpreadPct,
-      minOpenInterest: cfg.minOpenInterest,
-    });
-    if (!liq.ok) {
-      this.pushActivity("skip", `${sym} skipped — ${liq.reason}`, {
+    this.log.info(
+      {
         symbol: sym,
-        details: {
-          product: selected.productSymbol,
-          bid: selected.bid,
-          ask: selected.ask,
-          oi: selected.openInterest,
-        },
-      });
-      this.log.info({ symbol: sym, reason: liq.reason, product: selected.productSymbol }, "Skip auto entry: liquidity");
-      return;
-    }
-
-    // Paper 3: MS + OI + Vol hybrid permission.
-    const regime = evaluateRegimeGuard({
-      direction: signal.direction as "BUY_CALL" | "BUY_PUT",
-      verdict,
-      openInterest: selected.openInterest,
-      minOpenInterest: cfg.minOpenInterest,
-      markIv: selected.markIv,
-      maxMarkIv: EXAM_MAX_MARK_IV,
-      minTrendStrength: EXAM_MIN_TREND_STRENGTH,
-    });
-    if (!regime.ok) {
-      this.pushActivity("skip", `${sym} skipped — ${regime.reason}`, {
-        symbol: sym,
-        details: { ...regime.details, product: selected.productSymbol, markIv: selected.markIv },
-      });
-      this.log.info(
-        { symbol: sym, reason: regime.reason, product: selected.productSymbol },
-        "Skip auto entry: regime",
-      );
-      return;
-    }
+        product: selected.productSymbol,
+        bid: selected.bid,
+        ask: selected.ask,
+        openInterest: selected.openInterest,
+        markIv: selected.markIv,
+      },
+      "Liquidity and regime recorded — entry gates disabled",
+    );
 
     const premium = selected.ask > 0 ? selected.ask : selected.markPremium;
     if (premium <= 0) {
@@ -775,9 +612,23 @@ export class AutoTrader {
       );
     }
 
+    // Delta aggregates repeated buys of one contract. Mirror that invariant in
+    // Athena so repeated free entries cannot create duplicate exit rows.
+    const existingProduct = await this.prisma.botPosition.findFirst({
+      where: {
+        status: "OPEN",
+        paper,
+        productId: selected.productId,
+      },
+    });
+    const totalSize = (existingProduct?.size ?? 0) + fillSize;
+    const effectiveEntry = existingProduct
+      ? ((existingProduct.entryPremium * existingProduct.size) + (fillPremium * fillSize)) / totalSize
+      : fillPremium;
+
     // SL + TP1 independent: tighter of settings/AI for SL; AI TP1 capped near settings (never wait for TP2).
     const levels = buildEntryLevels({
-      fillPremium,
+      fillPremium: effectiveEntry,
       slFraction: cfg.slFraction,
       tp1Fraction: cfg.tp1Fraction,
       aiEntry: signal.premium_entry,
@@ -790,21 +641,21 @@ export class AutoTrader {
     const fillCostInr =
       contractCostUsd(fillPremium, selected.contractValue) * fillSize * usdInr;
 
-    await this.prisma.botPosition.create({
-      data: {
+    const positionData = {
         exchange: "delta",
         productId: selected.productId,
         productSymbol: selected.productSymbol,
         underlying: sym,
         direction: signal.direction,
-        size: fillSize,
-        entryPremium: fillPremium,
+        size: totalSize,
+        entryPremium: effectiveEntry,
         stopLoss,
         takeProfit1,
         status: "OPEN",
         paper,
         entryOrderId,
         signalSnapshot: {
+          ...((existingProduct?.signalSnapshot ?? {}) as object),
           timeframe: signal.timeframe,
           confidence: signal.confidence,
           risk_level: signal.risk_level,
@@ -812,8 +663,11 @@ export class AutoTrader {
           selected,
           tpSource,
           slSource,
-          peakExitPx: fillPremium,
-          originalSize: fillSize,
+          peakExitPx: Math.max(
+            Number(((existingProduct?.signalSnapshot ?? {}) as { peakExitPx?: number }).peakExitPx ?? 0),
+            effectiveEntry,
+          ),
+          originalSize: totalSize,
           requestedSize,
           aiPremium: {
             entry: signal.premium_entry ?? null,
@@ -836,8 +690,25 @@ export class AutoTrader {
             tp1Fraction: cfg.tp1Fraction,
           },
         } as object,
-      },
-    });
+      };
+    if (existingProduct) {
+      await this.prisma.botPosition.update({
+        where: { id: existingProduct.id },
+        data: positionData,
+      });
+      this.log.info(
+        {
+          product: selected.productSymbol,
+          previousSize: existingProduct.size,
+          addedSize: fillSize,
+          totalSize,
+          effectiveEntry,
+        },
+        "Merged repeated buy into Athena OPEN",
+      );
+    } else {
+      await this.prisma.botPosition.create({ data: positionData });
+    }
 
     this.pushActivity(
       "trade",
@@ -876,12 +747,17 @@ export class AutoTrader {
   async monitorOpenPositions(): Promise<void> {
     const cfg = await getBotConfig(this.prisma);
     const open = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
-    // Sync live books: if closed on Delta outside the app, mark Athena closed
+    // Sync live books: close Athena if flat on Delta; import Delta longs Athena missed.
     if (!cfg.paperTrading && this.client.configured) {
       try {
         await this.syncExternalCloses(open.filter((p) => !p.paper));
       } catch (err) {
         this.log.error({ err }, "Delta position sync failed");
+      }
+      try {
+        await this.syncExternalOpens(cfg);
+      } catch (err) {
+        this.log.error({ err }, "Delta open-import sync failed");
       }
     }
     const stillOpen = await this.prisma.botPosition.findMany({ where: { status: "OPEN" } });
@@ -933,6 +809,104 @@ export class AutoTrader {
         { symbol: pos.productSymbol, details: { mark, reason: "external_close" } },
       );
       await this.executeExit(pos, mark, "external_close", { skipExchangeOrder: true });
+    }
+  }
+
+  /**
+   * Import Delta longs Athena does not have as OPEN (manual buys / missed fills).
+   */
+  private async syncExternalOpens(cfg: RuntimeBotConfig): Promise<void> {
+    const exchange = await this.client.getOpenMarginedPositions();
+    if (!exchange.length) return;
+
+    const athenaOpen = await this.prisma.botPosition.findMany({
+      where: { status: "OPEN", paper: false },
+      select: { productId: true, productSymbol: true, size: true },
+    });
+    const byProduct = new Map(athenaOpen.map((p) => [p.productId, p]));
+    const bySymbol = new Map(athenaOpen.map((p) => [p.productSymbol.toUpperCase(), p]));
+    const fx = await getUsdInrRate(this.log);
+    const usdInr = fx.rate;
+
+    for (const remote of exchange) {
+      const size = Math.abs(remote.size);
+      if (size <= 0) continue;
+      const existing =
+        byProduct.get(remote.productId) ?? bySymbol.get(remote.productSymbol.toUpperCase());
+      if (existing) {
+        if (Math.abs(existing.size - size) >= 1) {
+          await this.prisma.botPosition.updateMany({
+            where: {
+              status: "OPEN",
+              paper: false,
+              OR: [{ productId: remote.productId }, { productSymbol: remote.productSymbol }],
+            },
+            data: { size },
+          });
+          this.log.warn(
+            { product: remote.productSymbol, from: existing.size, to: size },
+            "Synced Athena OPEN size to Delta",
+          );
+        }
+        continue;
+      }
+
+      const meta = parseProductSymbol(remote.productSymbol);
+      if (!meta) continue;
+      const entry = remote.entryPrice > 0 ? remote.entryPrice : 0;
+      if (entry <= 0) continue;
+
+      const levels = buildEntryLevels({
+        fillPremium: entry,
+        slFraction: cfg.slFraction,
+        tp1Fraction: cfg.tp1Fraction,
+      });
+      const cv = defaultContractValue(remote.productSymbol);
+      const costInr = contractCostUsd(entry, cv) * size * usdInr;
+
+      await this.prisma.botPosition.create({
+        data: {
+          exchange: "delta",
+          productId: remote.productId,
+          productSymbol: remote.productSymbol,
+          underlying: meta.underlying,
+          direction: meta.direction,
+          size,
+          entryPremium: entry,
+          stopLoss: levels.stopLoss,
+          takeProfit1: levels.takeProfit1,
+          status: "OPEN",
+          paper: false,
+          entryOrderId: `delta-sync-${remote.productId}`,
+          signalSnapshot: {
+            timeframe: "sync",
+            confidence: 0,
+            risk_level: "High",
+            importedFromDelta: true,
+            peakExitPx: entry,
+            originalSize: size,
+            selected: { contractValue: cv, productSymbol: remote.productSymbol },
+            planned: {
+              costInr,
+              contractValue: cv,
+              usdInr,
+              stopLoss: levels.stopLoss,
+              takeProfit1: levels.takeProfit1,
+              slFraction: cfg.slFraction,
+              tp1Fraction: cfg.tp1Fraction,
+            },
+          } as object,
+        },
+      });
+      this.pushActivity(
+        "trade",
+        `IMPORTED from Delta ${meta.direction} ${remote.productSymbol} ×${size} @ ${entry.toFixed(2)} (≈₹${costInr.toFixed(0)})`,
+        { symbol: meta.underlying, details: { product: remote.productSymbol, size, entry, costInr } },
+      );
+      this.log.warn(
+        { product: remote.productSymbol, size, entry, costInr },
+        "Imported orphan Delta position into Athena OPEN",
+      );
     }
   }
 
