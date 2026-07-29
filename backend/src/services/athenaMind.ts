@@ -12,9 +12,10 @@ export const ATHENA_MIND = `
 
 ## Entries (free / guided)
 - Polls AI on 1m, 5m, 15m — all live TFs allowed.
-- No strategy vetoes: confidence, risk, cooldown, daily cap, Gemini trend,
-  liquidity, IV/regime, and same-underlying checks are advisory only.
-- Gemini/OpenRouter still supplies guidance and activity context.
+- No routine strategy vetoes: confidence, risk, cooldown, daily cap,
+  liquidity, and IV/regime are advisory only.
+- Gemini/OpenRouter supplies guidance and enforces one invariant: never open
+  CALL and PUT together on one underlying. A flip closes the old side first.
 - Repeated buys of one Delta contract merge into one Athena position.
 - Mechanical limits remain: a valid positive-price contract, available wallet,
   maxOrder, and maxOpenExposure.

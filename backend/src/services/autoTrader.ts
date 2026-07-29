@@ -8,7 +8,7 @@ import { getBotConfig, type RuntimeBotConfig } from "./botConfig.js";
 import { evaluateEntryGuards } from "./entryGuards.js";
 import { botActivityToFeedItem, publishBotFeed } from "./botFeed.js";
 import { buildEntryLevels, decideLongExit, probeHasRaised, shouldQuickFailExit } from "./exitLogic.js";
-import { getTrendVerdict, shouldMomentumExit, isTrendJudgeLive } from "./trendJudge.js";
+import { getTrendVerdict, shouldMomentumExit, verdictAllows, isTrendJudgeLive } from "./trendJudge.js";
 import { notifyBuy, notifySell, notifyTrade } from "./pushService.js";
 import { extractFilledSize, reconcileEntryFill } from "./orderFill.js";
 import { EXAM_RISK_PCT_OF_EQUITY } from "./examDesk.js";
@@ -390,7 +390,9 @@ export class AutoTrader {
       this.log.info({ openExposure, room }, "Skip auto entry: exposure limit reached");
       return;
     }
-    // Gemini guides and reports; it no longer vetoes an entry.
+    // Gemini guides freely, with one portfolio invariant: never hold both
+    // CALL and PUT on the same underlying. A real flip must close the old side
+    // before the new side can open.
     const verdict = await getTrendVerdict(sym, this.log);
     if (isTrendJudgeLive(verdict.source)) {
       void publishBotFeed(this.prisma, this.log, {
@@ -406,6 +408,39 @@ export class AutoTrader {
       { symbol: sym, direction: signal.direction, verdict, confidence: signal.confidence },
       "Gemini guidance recorded — entry gates disabled",
     );
+    const opposingOpen = open.filter(
+      (p) => p.underlying === sym && p.direction !== signal.direction,
+    );
+    if (opposingOpen.length) {
+      const guidance = verdictAllows(
+        signal.direction as "BUY_CALL" | "BUY_PUT",
+        verdict,
+      );
+      const oldSide = opposingOpen[0].direction;
+      const reason = guidance.ok
+        ? `Gemini confirms ${signal.direction}, but ${oldSide} must close before flipping`
+        : `Gemini does not confirm flip: ${guidance.why}`;
+      this.pushActivity(
+        "skip",
+        `${sym} ${signal.direction} held — no CALL+PUT hedge (${reason})`,
+        {
+          symbol: sym,
+          details: {
+            guardian: "gemini_one_side",
+            oldSide,
+            wantedSide: signal.direction,
+            trend: verdict.trend,
+            strength: verdict.strength,
+            reason,
+          },
+        },
+      );
+      this.log.info(
+        { symbol: sym, oldSide, wantedSide: signal.direction, verdict, reason },
+        "Gemini guardian blocked CALL+PUT conflict",
+      );
+      return;
+    }
 
     const optionType = signal.direction === "BUY_CALL" ? "call" : "put";
     const tickers = await this.client.getOptionTickers(signal.symbol, optionType);
